@@ -310,12 +310,14 @@ export function CameraScreen({ navigation, route }: Props) {
           >
             <Text style={styles.primaryButtonText}>Allow camera</Text>
           </Pressable>
-          <Pressable
-            style={styles.secondaryButton}
-            onPress={() => navigation.navigate("History")}
-          >
-            <Text style={styles.secondaryButtonText}>View history</Text>
-          </Pressable>
+          {!dailyMode ? (
+            <Pressable
+              style={styles.secondaryButton}
+              onPress={() => navigation.navigate("History")}
+            >
+              <Text style={styles.secondaryButtonText}>View history</Text>
+            </Pressable>
+          ) : null}
         </View>
       </SafeAreaView>
     );
@@ -339,12 +341,14 @@ export function CameraScreen({ navigation, route }: Props) {
           >
             <Text style={styles.secondaryButtonText}>Try again</Text>
           </Pressable>
-          <Pressable
-            style={styles.secondaryButton}
-            onPress={() => navigation.navigate("History")}
-          >
-            <Text style={styles.secondaryButtonText}>View history</Text>
-          </Pressable>
+          {!dailyMode ? (
+            <Pressable
+              style={styles.secondaryButton}
+              onPress={() => navigation.navigate("History")}
+            >
+              <Text style={styles.secondaryButtonText}>View history</Text>
+            </Pressable>
+          ) : null}
         </View>
       </SafeAreaView>
     );
@@ -381,26 +385,26 @@ export function CameraScreen({ navigation, route }: Props) {
             <Text style={styles.signOutLinkText}>Sign out</Text>
           </Pressable>
         </View>
-        <View style={styles.headerNav}>
-          {!dailyMode ? (
+        {!dailyMode ? (
+          <View style={styles.headerNav}>
             <Pressable
               style={styles.dailyLink}
               onPress={() => navigation.navigate("DailyAura")}
             >
               <Text style={styles.dailyLinkText}>Daily</Text>
             </Pressable>
-          ) : null}
-          <Pressable
-            style={({ pressed }) => [
-              styles.navButton,
-              pressed && styles.navButtonPressed,
-            ]}
-            onPress={() => navigation.navigate("History")}
-            disabled={isBusy}
-          >
-            <Text style={styles.navButtonText}>History</Text>
-          </Pressable>
-        </View>
+            <Pressable
+              style={({ pressed }) => [
+                styles.navButton,
+                pressed && styles.navButtonPressed,
+              ]}
+              onPress={() => navigation.navigate("History")}
+              disabled={isBusy}
+            >
+              <Text style={styles.navButtonText}>History</Text>
+            </Pressable>
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.previewFrame}>
