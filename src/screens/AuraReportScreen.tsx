@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as Haptics from "expo-haptics";
-import { Audio } from "expo-av";
+import { useAudioPlayer, setAudioModeAsync } from "expo-audio";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   ActivityIndicator,
@@ -13,6 +13,7 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
+import ViewShot from "react-native-view-shot";
 import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import Animated, {
@@ -25,11 +26,16 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { AuraGauge } from "../components/AuraGauge";
+import { ShareAuraCard } from "../components/ShareAuraCard";
 import { ThreatBadge } from "../components/ThreatBadge";
 import { TraitRadar } from "../components/TraitRadar";
+// import { useBadgeUnlock } from "../context/BadgeUnlockContext";
+// import { useAuth } from "../context/AuthContext";
 import { SAMPLE_AURA_REPORT } from "../data/sampleAuraReport";
 import { RootStackParamList } from "../navigation/types";
 import { deleteReport, hasSaveEndpoint, saveAuraReport } from "../services/auraReports";
+// import { evaluateAndUnlockBadges } from "../services/badges";
+import { captureAndShare } from "../services/share";
 import { SavedAuraReport } from "../types";
 
 type Props = NativeStackScreenProps<RootStackParamList, "AuraReport">;
@@ -84,18 +90,25 @@ export function AuraReportScreen({ route, navigation }: Props) {
   const canSave = mode === "scan" && hasSaveEndpoint();
   const reportId = (report as SavedAuraReport).id;
   const canDelete = mode === "saved" && typeof reportId === "string";
+  const sparkleTone = useAudioPlayer(require("../../assets/sparkle-tone.wav"));
 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const shareRef = useRef<ViewShot>(null);
+  // const { showUnlocks } = useBadgeUnlock();
+  // const { user } = useAuth();
 
   useFocusEffect(
     useCallback(() => {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Audio.setAudioModeAsync({ playsInSilentModeIOS: true })
-        .then(() => Audio.Sound.createAsync(require("../../assets/sparkle-tone.wav"), { shouldPlay: true, volume: 0.8 }))
-        .then(({ sound }) => sound.setOnPlaybackStatusUpdate((s) => { if ("didJustFinish" in s && s.didJustFinish) sound.unloadAsync(); }))
-        .catch(() => {});
-    }, []),
+      setAudioModeAsync({ playsInSilentMode: false })
+        .then(() => {
+          sparkleTone.seekTo(0);
+          sparkleTone.volume = 0.8;
+          sparkleTone.play();
+        }).catch(() => {});
+    }, [sparkleTone]),
   );
 
   function handleDelete() {
@@ -131,6 +144,14 @@ export function AuraReportScreen({ route, navigation }: Props) {
     try {
       await saveAuraReport(report);
       setSaved(true);
+      // const unlocked = await evaluateAndUnlockBadges({
+      //   userId: user?.id,
+      //   report,
+      //   scanTimestamp: new Date(),
+      // });
+      // if (unlocked.length > 0) {
+      //   showUnlocks(unlocked);
+      // }
     } catch (error) {
       console.error("Save aura report failed:", error);
       Alert.alert(
@@ -139,6 +160,23 @@ export function AuraReportScreen({ route, navigation }: Props) {
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleShare() {
+    if (sharing) {
+      return;
+    }
+
+    setSharing(true);
+    try {
+      await captureAndShare(shareRef, "Send this diagnosis to the group chat");
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (error) {
+      console.warn("Aura share failed:", error);
+      Alert.alert("Share failed", "The aura refused to leave the building. Try again.");
+    } finally {
+      setSharing(false);
     }
   }
 
@@ -259,7 +297,27 @@ export function AuraReportScreen({ route, navigation }: Props) {
             </Pressable>
           </FadeSlideIn>
         ) : null}
+
+        <FadeSlideIn delay={1200}>
+          <Pressable
+            style={({ pressed }) => [styles.shareButton, pressed && styles.shareButtonPressed]}
+            onPress={() => void handleShare()}
+            disabled={sharing}
+          >
+            {sharing ? (
+              <ActivityIndicator color="#E9D5FF" />
+            ) : (
+              <Text style={styles.shareButtonText}>Leak to group chat</Text>
+            )}
+          </Pressable>
+        </FadeSlideIn>
       </ScrollView>
+
+      <View style={styles.offscreen} pointerEvents="none">
+        <ViewShot ref={shareRef} options={{ format: "png", quality: 1 }}>
+          <ShareAuraCard report={report} />
+        </ViewShot>
+      </View>
     </LinearGradient>
   );
 }
@@ -473,5 +531,28 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "800",
     letterSpacing: 1.2,
+  },
+  shareButton: {
+    height: 50,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(123, 108, 246, 0.18)",
+    borderWidth: 1,
+    borderColor: "rgba(196, 181, 253, 0.35)",
+  },
+  shareButtonPressed: {
+    opacity: 0.75,
+  },
+  shareButtonText: {
+    color: "#E9D5FF",
+    fontSize: 14,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+  },
+  offscreen: {
+    position: "absolute",
+    left: -9999,
+    top: 0,
   },
 });

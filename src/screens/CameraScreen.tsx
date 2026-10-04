@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Audio } from "expo-av";
+import { useAudioPlayer, setAudioModeAsync } from "expo-audio";
 import {
   ActivityIndicator,
   Alert,
@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useIsFocused } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import {
   CameraType,
@@ -30,9 +31,13 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { ScanningOverlay } from "../components/ScanningOverlay";
+import { ProfileAvatar } from "../components/ProfileAvatar";
 import { useAuth } from "../context/AuthContext";
+// import { useBadgeUnlock } from "../context/BadgeUnlockContext";
+import { useProfile } from "../context/ProfileContext";
 import { RootStackParamList } from "../navigation/types";
 import { analyzeAura, hasAuraAnalysisEndpoint } from "../services/analyzeAura";
+// import { evaluateAndUnlockBadges } from "../services/badges";
 import {
   hasScannedToday,
   saveDailyReport,
@@ -112,7 +117,9 @@ function AnalyzeAuraButton({ onPress }: { onPress: () => void }) {
 }
 
 export function CameraScreen({ navigation, route }: Props) {
-  const { signOut } = useAuth();
+  const { user } = useAuth();
+  const { profile } = useProfile();
+  // const { showUnlocks } = useBadgeUnlock();
   const cameraRef = useRef<CameraView | null>(null);
   const [permission, requestPermission] = useCameraPermissions();
   const [capturedUri, setCapturedUri] = useState<string | null>(null);
@@ -123,14 +130,28 @@ export function CameraScreen({ navigation, route }: Props) {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [facing, setFacing] = useState<CameraType>("back");
+  const isFocused = useIsFocused();
 
   const isBusy = isCapturing || isAnalyzing;
   const dailyMode = route.params?.dailyMode === true;
   const canShowCamera = permission?.granted && !capturedUri;
+  const scanTone = useAudioPlayer(require("../../assets/scan-tone.wav"));
   const permissionStatus = permission?.status;
   const analysisMode = hasAuraAnalysisEndpoint()
     ? "Live analysis"
     : "Fallback mode";
+
+  useEffect(() => {
+    setAudioModeAsync({ playsInSilentMode: false }).catch((error) => {
+      console.warn("Audio mode setup failed:", error);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!isFocused) {
+      setCameraReady(false);
+    }
+  }, [isFocused]);
 
   async function handleCapture() {
     if (!cameraRef.current || isBusy) {
@@ -155,10 +176,9 @@ export function CameraScreen({ navigation, route }: Props) {
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-      Audio.setAudioModeAsync({ playsInSilentModeIOS: true })
-        .then(() => Audio.Sound.createAsync(require("../../assets/scan-tone.wav"), { shouldPlay: true, volume: 0.7 }))
-        .then(({ sound }) => sound.setOnPlaybackStatusUpdate((s) => { if ("didJustFinish" in s && s.didJustFinish) sound.unloadAsync(); }))
-        .catch(() => {});
+      scanTone.seekTo(0);
+      scanTone.volume = 0.7;
+      scanTone.play();
 
       const photo = await cameraRef.current.takePictureAsync({
         quality: 0.85,
@@ -220,7 +240,7 @@ export function CameraScreen({ navigation, route }: Props) {
   }
 
   async function handleAnalyze() {
-    if (!processedPhoto || isBusy) {
+    if (!processedPhoto || isBusy || !user) {
       return;
     }
 
@@ -230,8 +250,24 @@ export function CameraScreen({ navigation, route }: Props) {
       const report = await analyzeAura(processedPhoto.base64);
       if (dailyMode) {
         await saveDailyReport(report);
+        // const unlocked = await evaluateAndUnlockBadges({
+        //   userId: user.id,
+        //   report,
+        //   scanTimestamp: new Date(),
+        // });
+        // if (unlocked.length > 0) {
+        //   showUnlocks(unlocked);
+        // }
         navigation.navigate("DailyAura");
       } else {
+        // const unlocked = await evaluateAndUnlockBadges({
+        //   userId: user.id,
+        //   report,
+        //   scanTimestamp: new Date(),
+        // });
+        // if (unlocked.length > 0) {
+        //   showUnlocks(unlocked);
+        // }
         navigation.navigate("AuraReport", { report });
       }
       setCapturedUri(null);
@@ -264,11 +300,11 @@ export function CameraScreen({ navigation, route }: Props) {
     setFacing((current) => (current === "back" ? "front" : "back"));
   }
 
-  function handleSignOut() {
-    Alert.alert("Sign out", "Sign out of Aura?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Sign out", style: "destructive", onPress: () => signOut() },
-    ]);
+  function handleOpenProfile() {
+    if (isBusy || !user) {
+      return;
+    }
+    navigation.navigate("Profile");
   }
 
   function handleOpenSettings() {
@@ -374,16 +410,14 @@ export function CameraScreen({ navigation, route }: Props) {
               {dailyMode ? "Today's reading." : "Point it at anything."}
             </Text>
           </View>
-          <Pressable
-            style={({ pressed }) => [
-              styles.signOutLink,
-              pressed && styles.signOutLinkPressed,
-            ]}
-            onPress={handleSignOut}
-            disabled={isBusy}
-          >
-            <Text style={styles.signOutLinkText}>Sign out</Text>
-          </Pressable>
+          {user ? (
+            <ProfileAvatar
+              userId={user.id}
+              profile={profile}
+              size="sm"
+              onPress={handleOpenProfile}
+            />
+          ) : null}
         </View>
         {!dailyMode ? (
           <View style={styles.headerNav}>
@@ -410,14 +444,15 @@ export function CameraScreen({ navigation, route }: Props) {
       <View style={styles.previewFrame}>
         {capturedUri ? (
           <Image source={{ uri: capturedUri }} style={styles.previewImage} />
-        ) : (
+        ) : isFocused ? (
           <CameraView
             ref={cameraRef}
             style={styles.previewImage}
             facing={facing}
+            active={isFocused}
             onCameraReady={() => setCameraReady(true)}
           />
-        )}
+        ) : null}
 
         <View style={styles.overlay}>
           <View style={styles.cornerTopLeft} />
@@ -550,18 +585,6 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 8,
   },
-  signOutLink: {
-    paddingVertical: 4,
-    paddingHorizontal: 2,
-  },
-  signOutLinkPressed: {
-    opacity: 0.6,
-  },
-  signOutLinkText: {
-    color: "#64748B",
-    fontSize: 12,
-    fontWeight: "700",
-  },
   kicker: {
     color: "#94A3B8",
     fontSize: 11,
@@ -612,9 +635,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.10)",
   },
-  previewImage: {
-    ...StyleSheet.absoluteFillObject,
-  },
+  // previewImage: {
+  //   ...StyleSheet.absoluteFillObject,
+  // },
   overlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(5, 7, 12, 0.08)",
