@@ -31,10 +31,10 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { ScanningOverlay } from "../components/ScanningOverlay";
-import { ProfileAvatar } from "../components/ProfileAvatar";
+// import { ProfileAvatar } from "../components/ProfileAvatar";
 import { useAuth } from "../context/AuthContext";
 // import { useBadgeUnlock } from "../context/BadgeUnlockContext";
-import { useProfile } from "../context/ProfileContext";
+// import { useProfile } from "../context/ProfileContext";
 import { RootStackParamList } from "../navigation/types";
 import { analyzeAura, hasAuraAnalysisEndpoint } from "../services/analyzeAura";
 // import { evaluateAndUnlockBadges } from "../services/badges";
@@ -118,7 +118,7 @@ function AnalyzeAuraButton({ onPress }: { onPress: () => void }) {
 
 export function CameraScreen({ navigation, route }: Props) {
   const { user } = useAuth();
-  const { profile } = useProfile();
+  // const { profile } = useProfile();
   // const { showUnlocks } = useBadgeUnlock();
   const cameraRef = useRef<CameraView | null>(null);
   const [permission, requestPermission] = useCameraPermissions();
@@ -300,12 +300,12 @@ export function CameraScreen({ navigation, route }: Props) {
     setFacing((current) => (current === "back" ? "front" : "back"));
   }
 
-  function handleOpenProfile() {
-    if (isBusy || !user) {
-      return;
-    }
-    navigation.navigate("Profile");
-  }
+  // function handleOpenProfile() {
+  //   if (isBusy || !user) {
+  //     return;
+  //   }
+  //   navigation.navigate("Profile");
+  // }
 
   function handleOpenSettings() {
     Linking.openSettings().catch(() => {
@@ -410,14 +410,14 @@ export function CameraScreen({ navigation, route }: Props) {
               {dailyMode ? "Today's reading." : "Point it at anything."}
             </Text>
           </View>
-          {user ? (
+          {/* {user ? (
             <ProfileAvatar
               userId={user.id}
               profile={profile}
               size="sm"
               onPress={handleOpenProfile}
             />
-          ) : null}
+          ) : null} */}
         </View>
         {!dailyMode ? (
           <View style={styles.headerNav}>

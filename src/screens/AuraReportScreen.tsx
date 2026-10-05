@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import * as Haptics from "expo-haptics";
 import { useAudioPlayer, setAudioModeAsync } from "expo-audio";
 import { LinearGradient } from "expo-linear-gradient";
@@ -13,7 +13,7 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import ViewShot from "react-native-view-shot";
+// import ViewShot from "react-native-view-shot";
 import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import Animated, {
@@ -26,7 +26,7 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { AuraGauge } from "../components/AuraGauge";
-import { ShareAuraCard } from "../components/ShareAuraCard";
+// import { ShareAuraCard } from "../components/ShareAuraCard";
 import { ThreatBadge } from "../components/ThreatBadge";
 import { TraitRadar } from "../components/TraitRadar";
 // import { useBadgeUnlock } from "../context/BadgeUnlockContext";
@@ -35,7 +35,7 @@ import { SAMPLE_AURA_REPORT } from "../data/sampleAuraReport";
 import { RootStackParamList } from "../navigation/types";
 import { deleteReport, hasSaveEndpoint, saveAuraReport } from "../services/auraReports";
 // import { evaluateAndUnlockBadges } from "../services/badges";
-import { captureAndShare } from "../services/share";
+// import { captureAndShare } from "../services/share";
 import { SavedAuraReport } from "../types";
 
 type Props = NativeStackScreenProps<RootStackParamList, "AuraReport">;
@@ -94,8 +94,8 @@ export function AuraReportScreen({ route, navigation }: Props) {
 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [sharing, setSharing] = useState(false);
-  const shareRef = useRef<ViewShot>(null);
+  // const [sharing, setSharing] = useState(false);
+  // const shareRef = useRef<ViewShot>(null);
   // const { showUnlocks } = useBadgeUnlock();
   // const { user } = useAuth();
 
@@ -163,22 +163,22 @@ export function AuraReportScreen({ route, navigation }: Props) {
     }
   }
 
-  async function handleShare() {
-    if (sharing) {
-      return;
-    }
-
-    setSharing(true);
-    try {
-      await captureAndShare(shareRef, "Send this diagnosis to the group chat");
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (error) {
-      console.warn("Aura share failed:", error);
-      Alert.alert("Share failed", "The aura refused to leave the building. Try again.");
-    } finally {
-      setSharing(false);
-    }
-  }
+  // async function handleShare() {
+  //   if (sharing) {
+  //     return;
+  //   }
+  //
+  //   setSharing(true);
+  //   try {
+  //     await captureAndShare(shareRef, "Send this diagnosis to the group chat");
+  //     await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  //   } catch (error) {
+  //     console.warn("Aura share failed:", error);
+  //     Alert.alert("Share failed", "The aura refused to leave the building. Try again.");
+  //   } finally {
+  //     setSharing(false);
+  //   }
+  // }
 
   return (
     <LinearGradient
@@ -298,7 +298,7 @@ export function AuraReportScreen({ route, navigation }: Props) {
           </FadeSlideIn>
         ) : null}
 
-        <FadeSlideIn delay={1200}>
+        {/* <FadeSlideIn delay={1200}>
           <Pressable
             style={({ pressed }) => [styles.shareButton, pressed && styles.shareButtonPressed]}
             onPress={() => void handleShare()}
@@ -310,14 +310,14 @@ export function AuraReportScreen({ route, navigation }: Props) {
               <Text style={styles.shareButtonText}>Leak to group chat</Text>
             )}
           </Pressable>
-        </FadeSlideIn>
+        </FadeSlideIn> */}
       </ScrollView>
 
-      <View style={styles.offscreen} pointerEvents="none">
+      {/* <View style={styles.offscreen} pointerEvents="none">
         <ViewShot ref={shareRef} options={{ format: "png", quality: 1 }}>
           <ShareAuraCard report={report} />
         </ViewShot>
-      </View>
+      </View> */}
     </LinearGradient>
   );
 }
@@ -532,27 +532,27 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 1.2,
   },
-  shareButton: {
-    height: 50,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(123, 108, 246, 0.18)",
-    borderWidth: 1,
-    borderColor: "rgba(196, 181, 253, 0.35)",
-  },
-  shareButtonPressed: {
-    opacity: 0.75,
-  },
-  shareButtonText: {
-    color: "#E9D5FF",
-    fontSize: 14,
-    fontWeight: "800",
-    letterSpacing: 1.2,
-  },
-  offscreen: {
-    position: "absolute",
-    left: -9999,
-    top: 0,
-  },
+  // shareButton: {
+  //   height: 50,
+  //   borderRadius: 18,
+  //   alignItems: "center",
+  //   justifyContent: "center",
+  //   backgroundColor: "rgba(123, 108, 246, 0.18)",
+  //   borderWidth: 1,
+  //   borderColor: "rgba(196, 181, 253, 0.35)",
+  // },
+  // shareButtonPressed: {
+  //   opacity: 0.75,
+  // },
+  // shareButtonText: {
+  //   color: "#E9D5FF",
+  //   fontSize: 14,
+  //   fontWeight: "800",
+  //   letterSpacing: 1.2,
+  // },
+  // offscreen: {
+  //   position: "absolute",
+  //   left: -9999,
+  //   top: 0,
+  // },
 });
