@@ -45,15 +45,8 @@ import {
 
 type Props = NativeStackScreenProps<RootStackParamList, "Camera">;
 
-type ProcessedPhoto = {
-  uri: string;
-  base64: string;
-  width: number;
-  height: number;
-};
-
-// Lets the scanning overlay play a full sweep before the capture resolves.
-const MIN_SCAN_OVERLAY_MS = 4000;
+// Lets the scanning overlay play a full sweep before the analysis resolves.
+// const MIN_SCAN_OVERLAY_MS = 4000;
 
 function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -123,9 +116,7 @@ export function CameraScreen({ navigation, route }: Props) {
   const cameraRef = useRef<CameraView | null>(null);
   const [permission, requestPermission] = useCameraPermissions();
   const [capturedUri, setCapturedUri] = useState<string | null>(null);
-  const [processedPhoto, setProcessedPhoto] = useState<ProcessedPhoto | null>(
-    null,
-  );
+  const [alreadyScannedToday, setAlreadyScannedToday] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
@@ -153,35 +144,38 @@ export function CameraScreen({ navigation, route }: Props) {
     }
   }, [isFocused]);
 
+  useEffect(() => {
+    if (!dailyMode || !isFocused) {
+      return;
+    }
+
+    hasScannedToday()
+      .then(setAlreadyScannedToday)
+      .catch((error) => {
+        console.warn("Daily scan check failed:", error);
+      });
+  }, [dailyMode, isFocused]);
+
   async function handleCapture() {
     if (!cameraRef.current || isBusy) {
       return;
     }
 
-    if (dailyMode) {
-      const alreadyScanned = await hasScannedToday();
-      if (alreadyScanned) {
-        Alert.alert(
-          "Drop already claimed",
-          "Today's pull is canon. Go touch grass, pull unlocks tomorrow.",
-        );
-        navigation.navigate("DailyAura");
-        return;
-      }
+    if (dailyMode && alreadyScannedToday) {
+      Alert.alert(
+        "Drop already claimed",
+        "Today's pull is canon. Go touch grass, pull unlocks tomorrow.",
+      );
+      navigation.navigate("DailyAura");
+      return;
     }
 
     setIsCapturing(true);
-    const startedAt = Date.now();
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
     try {
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-
-      scanTone.seekTo(0);
-      scanTone.volume = 0.7;
-      scanTone.play();
-
       const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.85,
+        quality: 0.5,
         skipProcessing: false,
       });
 
@@ -190,9 +184,40 @@ export function CameraScreen({ navigation, route }: Props) {
       }
 
       setCapturedUri(photo.uri);
+    } catch (error) {
+      console.error("Camera capture failed:", error);
+      Alert.alert(
+        "Capture paused",
+        "Aura could not capture this image. Try again and the camera will stay stable.",
+      );
+      setCapturedUri(null);
+    } finally {
+      setIsCapturing(false);
+    }
+  }
 
+  function handleRetake() {
+    if (isBusy) {
+      return;
+    }
+
+    setCapturedUri(null);
+    setCameraReady(false);
+  }
+
+  async function handleAnalyze() {
+    if (!capturedUri || isBusy || !user) {
+      return;
+    }
+
+    setIsAnalyzing(true);
+    scanTone.seekTo(0);
+    scanTone.volume = 0.7;
+    scanTone.play();
+
+    try {
       const resizedPhoto = await manipulateAsync(
-        photo.uri,
+        capturedUri,
         [{ resize: { width: 640 } }],
         {
           compress: 0.78,
@@ -205,49 +230,7 @@ export function CameraScreen({ navigation, route }: Props) {
         throw new Error("Photo resize did not return base64 data.");
       }
 
-      setProcessedPhoto({
-        uri: resizedPhoto.uri,
-        base64: resizedPhoto.base64,
-        width: resizedPhoto.width,
-        height: resizedPhoto.height,
-      });
-
-      const elapsed = Date.now() - startedAt;
-      if (elapsed < MIN_SCAN_OVERLAY_MS) {
-        await wait(MIN_SCAN_OVERLAY_MS - elapsed);
-      }
-    } catch (error) {
-      console.error("Camera capture failed:", error);
-      Alert.alert(
-        "Capture paused",
-        "Aura could not capture or prepare this image. Try again and the camera will stay stable.",
-      );
-      setCapturedUri(null);
-      setProcessedPhoto(null);
-    } finally {
-      setIsCapturing(false);
-    }
-  }
-
-  function handleRetake() {
-    if (isBusy) {
-      return;
-    }
-
-    setCapturedUri(null);
-    setProcessedPhoto(null);
-    setCameraReady(false);
-  }
-
-  async function handleAnalyze() {
-    if (!processedPhoto || isBusy || !user) {
-      return;
-    }
-
-    setIsAnalyzing(true);
-
-    try {
-      const report = await analyzeAura(processedPhoto.base64);
+      const report = await analyzeAura(resizedPhoto.base64);
       if (dailyMode) {
         await saveDailyReport(report);
         // const unlocked = await evaluateAndUnlockBadges({
@@ -271,7 +254,6 @@ export function CameraScreen({ navigation, route }: Props) {
         navigation.navigate("AuraReport", { report });
       }
       setCapturedUri(null);
-      setProcessedPhoto(null);
       setCameraReady(false);
     } catch (error) {
       console.error("Aura analysis failed:", error);
@@ -479,7 +461,7 @@ export function CameraScreen({ navigation, route }: Props) {
           </Pressable>
         ) : null}
 
-        {isCapturing ? <ScanningOverlay /> : null}
+        {isAnalyzing ? <ScanningOverlay /> : null}
       </View>
 
       <View style={styles.statusBar}>
@@ -500,9 +482,7 @@ export function CameraScreen({ navigation, route }: Props) {
           {isAnalyzing
             ? analysisMode
             : capturedUri
-              ? processedPhoto
-                ? `${processedPhoto.width} x ${processedPhoto.height}`
-                : "Preparing JPEG"
+              ? "Ready to analyze"
               : cameraReady
                 ? "Camera ready"
                 : "Warming up camera"}
@@ -635,11 +615,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.10)",
   },
-  // previewImage: {
-  //   ...StyleSheet.absoluteFillObject,
-  // },
+  previewImage: {
+    ...StyleSheet.absoluteFill,
+  },
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: "rgba(5, 7, 12, 0.08)",
   },
   cornerTopLeft: {
@@ -816,7 +796,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
   },
   analyzeGlow: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     margin: -8,
     borderRadius: 28,
     backgroundColor: "#C4B5FD",
@@ -827,7 +807,7 @@ const styles = StyleSheet.create({
     elevation: 12,
   },
   analyzeGradient: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",

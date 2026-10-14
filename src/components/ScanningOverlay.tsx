@@ -67,7 +67,7 @@ export function ScanningOverlay() {
 
   return (
     <View
-      style={[StyleSheet.absoluteFillObject, styles.container]}
+      style={[StyleSheet.absoluteFill, styles.container]}
       onLayout={(e) => setContainerHeight(e.nativeEvent.layout.height)}
     >
       <Animated.View style={[styles.scanLine, lineStyle]} />
