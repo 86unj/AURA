@@ -2,39 +2,11 @@ import { StyleSheet, Text, View } from "react-native";
 
 import { ThreatLevel } from "../types";
 
-const THREAT_STYLES: Record<
-  ThreatLevel,
-  {
-    label: string;
-    backgroundColor: string;
-    textColor: string;
-    borderColor: string;
-  }
-> = {
-  low: {
-    label: "LOW THREAT",
-    backgroundColor: "rgba(20, 184, 166, 0.14)",
-    textColor: "#99F6E4",
-    borderColor: "rgba(20, 184, 166, 0.28)",
-  },
-  moderate: {
-    label: "MODERATE THREAT",
-    backgroundColor: "rgba(245, 158, 11, 0.14)",
-    textColor: "#FCD34D",
-    borderColor: "rgba(245, 158, 11, 0.28)",
-  },
-  elevated: {
-    label: "ELEVATED THREAT",
-    backgroundColor: "rgba(249, 115, 22, 0.16)",
-    textColor: "#FDBA74",
-    borderColor: "rgba(249, 115, 22, 0.3)",
-  },
-  cosmic: {
-    label: "COSMIC THREAT",
-    backgroundColor: "rgba(168, 85, 247, 0.18)",
-    textColor: "#DDD6FE",
-    borderColor: "rgba(168, 85, 247, 0.32)",
-  },
+const THREAT_STYLES: Record<ThreatLevel, { label: string; color: string }> = {
+  low: { label: "Low threat", color: "#5EEAD4" },
+  moderate: { label: "Moderate threat", color: "#FDE68A" },
+  elevated: { label: "Elevated threat", color: "#FDBA74" },
+  cosmic: { label: "Cosmic threat", color: "#F9A8D4" },
 };
 
 type ThreatBadgeProps = {
@@ -48,30 +20,34 @@ export function ThreatBadge({ level }: ThreatBadgeProps) {
     <View
       style={[
         styles.badge,
-        {
-          backgroundColor: style.backgroundColor,
-          borderColor: style.borderColor,
-        },
+        { backgroundColor: `${style.color}1F`, borderColor: `${style.color}55` },
       ]}
     >
-      <Text style={[styles.label, { color: style.textColor }]}>
-        {style.label}
-      </Text>
+      <View style={[styles.dot, { backgroundColor: style.color }]} />
+      <Text style={[styles.label, { color: style.color }]}>{style.label}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   badge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
     borderWidth: 1,
     borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     alignSelf: "flex-start",
+  },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
   },
   label: {
     fontSize: 11,
-    letterSpacing: 1.2,
     fontWeight: "800",
+    letterSpacing: 0.6,
   },
 });

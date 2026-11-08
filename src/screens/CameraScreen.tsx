@@ -5,11 +5,13 @@ import {
   Alert,
   Image,
   Linking,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import Svg, { Path } from "react-native-svg";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useIsFocused } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -30,13 +32,16 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 
+
+import { AppLogo } from "../components/AppLogo";
 import { ScanningOverlay } from "../components/ScanningOverlay";
+import { COLORS } from "../theme/game";
 // import { ProfileAvatar } from "../components/ProfileAvatar";
 import { useAuth } from "../context/AuthContext";
 // import { useBadgeUnlock } from "../context/BadgeUnlockContext";
 // import { useProfile } from "../context/ProfileContext";
 import { RootStackParamList } from "../navigation/types";
-import { analyzeAura, hasAuraAnalysisEndpoint } from "../services/analyzeAura";
+import { analyzeAura } from "../services/analyzeAura";
 // import { evaluateAndUnlockBadges } from "../services/badges";
 import {
   hasScannedToday,
@@ -44,6 +49,23 @@ import {
 } from "../services/dailyAura";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Camera">;
+
+const SCRIPT_FONT = Platform.select({
+  ios: "Noteworthy-Light",
+  android: "casual",
+  default: "Segoe Script, cursive",
+});
+
+function ScanMark() {
+  return (
+    <View style={styles.scanMark}>
+      <View style={[styles.markArm, styles.markTopLeft]} />
+      <View style={[styles.markArm, styles.markTopRight]} />
+      <View style={[styles.markArm, styles.markBottomLeft]} />
+      <View style={[styles.markArm, styles.markBottomRight]} />
+    </View>
+  );
+}
 
 // Lets the scanning overlay play a full sweep before the analysis resolves.
 // const MIN_SCAN_OVERLAY_MS = 4000;
@@ -83,7 +105,7 @@ function AnalyzeAuraButton({ onPress }: { onPress: () => void }) {
       onPress={onPress}
       style={({ pressed }) => [
         styles.analyzeButtonWrap,
-        pressed && styles.scanButtonPressed,
+        pressed && styles.analyzeButtonPressed,
       ]}
     >
       <Animated.View style={[styles.analyzeGlow, glowStyle]} />
@@ -128,9 +150,6 @@ export function CameraScreen({ navigation, route }: Props) {
   const canShowCamera = permission?.granted && !capturedUri;
   const scanTone = useAudioPlayer(require("../../assets/scan-tone.wav"));
   const permissionStatus = permission?.status;
-  const analysisMode = hasAuraAnalysisEndpoint()
-    ? "Live analysis"
-    : "Fallback mode";
 
   useEffect(() => {
     setAudioModeAsync({ playsInSilentMode: false }).catch((error) => {
@@ -163,8 +182,8 @@ export function CameraScreen({ navigation, route }: Props) {
 
     if (dailyMode && alreadyScannedToday) {
       Alert.alert(
-        "Drop already claimed",
-        "Today's pull is canon. Go touch grass, pull unlocks tomorrow.",
+        "Already scanned today",
+        "Your daily aura is locked in. Come back tomorrow for the next one.",
       );
       navigation.navigate("DailyAura");
       return;
@@ -316,7 +335,10 @@ export function CameraScreen({ navigation, route }: Props) {
     return (
       <SafeAreaView style={styles.screenShell}>
         <View style={styles.permissionCard}>
-          <Text style={styles.brand}>AURA</Text>
+          <View style={styles.brandLockup}>
+            <AppLogo size={88} />
+            <Text style={styles.brand}>AURA</Text>
+          </View>
           <Text style={styles.permissionTitle}>Camera access needed</Text>
           <Text style={styles.permissionBody}>
             To scan an aura, Aura needs the camera. Nothing is saved unless you
@@ -345,7 +367,10 @@ export function CameraScreen({ navigation, route }: Props) {
     return (
       <SafeAreaView style={styles.screenShell}>
         <View style={styles.permissionCard}>
-          <Text style={styles.brand}>AURA</Text>
+          <View style={styles.brandLockup}>
+            <AppLogo size={88} />
+            <Text style={styles.brand}>AURA</Text>
+          </View>
           <Text style={styles.permissionTitle}>Camera access denied</Text>
           <Text style={styles.permissionBody}>
             Open Settings and allow camera access, then return here.
@@ -372,56 +397,45 @@ export function CameraScreen({ navigation, route }: Props) {
     );
   }
 
-  const cameraStatusLabel = isCapturing
-    ? "Capturing"
-    : isAnalyzing
-      ? "Analyzing"
-      : capturedUri
-        ? "Frozen"
-        : "Live";
 
   return (
     <SafeAreaView style={styles.screenShell}>
-      <View style={styles.header}>
-        <View style={styles.headerTop}>
-          <View style={styles.headerCopy}>
-            <Text style={styles.kicker}>
-              {dailyMode ? "DAILY AURA SCAN" : "DEADPAN CAMERA SCAN"}
-            </Text>
-            <Text style={styles.title}>
-              {dailyMode ? "Today's reading." : "Point it at anything."}
-            </Text>
-          </View>
-          {/* {user ? (
-            <ProfileAvatar
-              userId={user.id}
-              profile={profile}
-              size="sm"
-              onPress={handleOpenProfile}
-            />
-          ) : null} */}
-        </View>
+      <View style={styles.topBar}>
+        <Text style={styles.wordmark}>aura.</Text>
         {!dailyMode ? (
           <View style={styles.headerNav}>
             <Pressable
-              style={styles.dailyLink}
               onPress={() => navigation.navigate("DailyAura")}
+              disabled={isBusy}
+              style={({ pressed }) => pressed && styles.navPressed}
             >
-              <Text style={styles.dailyLinkText}>Daily</Text>
+              <Text style={styles.navDaily}>Daily</Text>
             </Pressable>
             <Pressable
-              style={({ pressed }) => [
-                styles.navButton,
-                pressed && styles.navButtonPressed,
-              ]}
               onPress={() => navigation.navigate("History")}
               disabled={isBusy}
+              style={({ pressed }) => pressed && styles.navPressed}
             >
-              <Text style={styles.navButtonText}>History</Text>
+              <Text style={styles.navHistory}>History</Text>
             </Pressable>
           </View>
-        ) : null}
+        ) : (
+          <Pressable
+            onPress={() => navigation.goBack()}
+            disabled={isBusy}
+            style={({ pressed }) => pressed && styles.navPressed}
+          >
+            <Text style={styles.navHistory}>Back</Text>
+          </Pressable>
+        )}
       </View>
+
+      <Text style={styles.title}>What's it giving?</Text>
+      <Text style={styles.subtitle}>
+        {dailyMode
+          ? "Point at anything. Tap to lock in today."
+          : "Point at anything. Tap to find out."}
+      </Text>
 
       <View style={styles.previewFrame}>
         {capturedUri ? (
@@ -436,102 +450,83 @@ export function CameraScreen({ navigation, route }: Props) {
           />
         ) : null}
 
-        <View style={styles.overlay}>
-          <View style={styles.cornerTopLeft} />
+        <View style={styles.overlay} pointerEvents="none">
+          {/* <View style={styles.cornerTopLeft} />
           <View style={styles.cornerTopRight} />
           <View style={styles.cornerBottomLeft} />
-          <View style={styles.cornerBottomRight} />
+          <View style={styles.cornerBottomRight} /> */}
+          {!capturedUri ? (
+            <View style={styles.liveBadge}>
+              <View style={styles.liveDot} />
+              <Text style={styles.liveText}>LIVE</Text>
+            </View>
+          ) : null}
         </View>
 
         {!capturedUri ? (
-          <Pressable
-            style={({ pressed }) => [
-              styles.cameraFlipButton,
-              pressed && styles.cameraFlipButtonPressed,
-              isBusy && styles.cameraFlipButtonDisabled,
-            ]}
-            onPress={handleToggleFacing}
-            disabled={isBusy}
-            accessibilityRole="button"
-            accessibilityLabel={
-              facing === "back" ? "Switch to front camera" : "Switch to back camera"
-            }
-          >
-            <Ionicons name="camera-reverse-outline" size={22} color="#F8FAFC" />
-          </Pressable>
-        ) : null}
-
-        {isAnalyzing ? <ScanningOverlay /> : null}
-      </View>
-
-      <View style={styles.statusBar}>
-        <View style={styles.statusBarPrimary}>
-          <View
-            style={[
-              styles.statusDot,
-              isCapturing || isAnalyzing
-                ? styles.statusDotBusy
-                : capturedUri
-                  ? styles.statusDotFrozen
-                  : styles.statusDotLive,
-            ]}
-          />
-          <Text style={styles.statusBarLabel}>{cameraStatusLabel}</Text>
-        </View>
-        <Text style={styles.statusBarDetail} numberOfLines={1}>
-          {isAnalyzing
-            ? analysisMode
-            : capturedUri
-              ? "Ready to analyze"
-              : cameraReady
-                ? "Camera ready"
-                : "Warming up camera"}
-        </Text>
-      </View>
-
-      <View style={styles.footer}>
-        {capturedUri && !isBusy ? (
-          <View style={styles.actionRow}>
+          <View style={styles.shutterDock}>
+            <View style={styles.shutterRing}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.scanButton,
+                  pressed && styles.scanButtonPressed,
+                  (isBusy || !cameraReady) && styles.scanButtonDisabled,
+                ]}
+                onPress={handleCapture}
+                disabled={isBusy || !cameraReady}
+                accessibilityRole="button"
+                accessibilityLabel="Capture photo"
+              >
+                {isCapturing ? (
+                  <ActivityIndicator color="#5B21B6" />
+                ) : (
+                  <ScanMark />
+                )}
+              </Pressable>
+            </View>
+            <Pressable
+              style={({ pressed }) => [
+                styles.flipButton,
+                pressed && styles.flipButtonPressed,
+                isBusy && styles.flipButtonDisabled,
+              ]}
+              onPress={handleToggleFacing}
+              disabled={isBusy}
+              accessibilityRole="button"
+              accessibilityLabel={
+                facing === "back"
+                  ? "Switch to front camera"
+                  : "Switch to back camera"
+              }
+            >
+              <Ionicons name="camera-reverse-outline" size={22} color="#F8FAFC" />
+            </Pressable>
+          </View>
+        ) : !isAnalyzing ? (
+          <View style={styles.reviewDock}>
             <Pressable
               style={({ pressed }) => [
                 styles.retakeButton,
                 pressed && styles.retakeButtonPressed,
               ]}
               onPress={handleRetake}
+              accessibilityRole="button"
+              accessibilityLabel="Retake photo"
             >
               <Text style={styles.retakeButtonText}>Retake</Text>
             </Pressable>
             <AnalyzeAuraButton onPress={handleAnalyze} />
           </View>
-        ) : (
-          <Pressable
-            style={({ pressed }) => [
-              styles.scanButton,
-              pressed && styles.scanButtonPressed,
-              isBusy && styles.scanButtonDisabled,
-            ]}
-            onPress={handleCapture}
-            disabled={isBusy || !cameraReady || !!capturedUri}
-          >
-            {isBusy ? (
-              <View style={styles.scanButtonLoadingRow}>
-                <ActivityIndicator color="#05070C" />
-                <Text style={styles.scanButtonText}>
-                  {isAnalyzing ? "Analyzing" : "Capturing"}
-                </Text>
-              </View>
-            ) : (
-              <Text style={styles.scanButtonText}>
-                {dailyMode ? "Scan daily aura" : "Scan"}
-              </Text>
-            )}
-          </Pressable>
-        )}
+        ) : null}
 
-        <Text style={styles.caption}>
+        {isAnalyzing ? <ScanningOverlay /> : null}
+      </View>
+
+      <View style={styles.footer}>
+        <Text style={styles.tagline}>
           {dailyMode
-            ? "One aura pull per day — no rerolls. Streak it or touch grass tomorrow."
-            : "Snap it. We freeze the frame and read whatever aura it's giving."}
+            ? "One aura pull per day. No rerolls, go touch grass."
+            : "Snap it. We read aura it's giving."}
         </Text>
       </View>
     </SafeAreaView>
@@ -541,78 +536,62 @@ export function CameraScreen({ navigation, route }: Props) {
 const styles = StyleSheet.create({
   screenShell: {
     flex: 1,
-    backgroundColor: "#05070c",
+    backgroundColor: COLORS.bg,
     paddingHorizontal: 18,
     paddingTop: 12,
     paddingBottom: 18,
   },
-  header: {
-    gap: 12,
-    marginBottom: 14,
-  },
-  headerTop: {
+  topBar: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "center",
     justifyContent: "space-between",
-    gap: 12,
+    marginBottom: 18,
   },
-  headerCopy: {
-    flex: 1,
+  wordmark: {
+    color: COLORS.text,
+    fontSize: 28,
+    fontWeight: "800",
+    letterSpacing: -0.8,
   },
   headerNav: {
     flexDirection: "row",
     alignItems: "center",
-    flexWrap: "wrap",
-    gap: 8,
+    gap: 18,
   },
-  kicker: {
-    color: "#94A3B8",
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 1.6,
-    marginBottom: 6,
+  navDaily: {
+    color: "#C4B5FD",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  navHistory: {
+    color: COLORS.text,
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  navPressed: {
+    opacity: 0.6,
   },
   title: {
-    color: "#F8FAFC",
-    fontSize: 26,
-    lineHeight: 32,
-    fontWeight: "900",
+    color: COLORS.text,
+    fontSize: 34,
+    lineHeight: 40,
+    fontWeight: "800",
     letterSpacing: -0.8,
   },
-  dailyLink: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: "rgba(124, 58, 237, 0.18)",
-    borderWidth: 1,
-    borderColor: "rgba(196, 181, 253, 0.35)",
-  },
-  dailyLinkText: {
-    color: "#DDD6FE",
-    fontSize: 11,
-    fontWeight: "900",
-    letterSpacing: 1,
-  },
-  statusDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 999,
-  },
-  statusDotLive: {
-    backgroundColor: "#4ADE80",
-  },
-  statusDotBusy: {
-    backgroundColor: "#C4B5FD",
-  },
-  statusDotFrozen: {
-    backgroundColor: "#94A3B8",
+  subtitle: {
+    color: "#C4B5FD",
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: "500",
+    marginTop: 4,
+    marginBottom: 16,
   },
   previewFrame: {
     flex: 1,
-    borderRadius: 30,
+    borderRadius: 26,
     overflow: "hidden",
-    backgroundColor: "#0B1020",
-    borderWidth: 1,
+    backgroundColor: COLORS.surface,
+    borderWidth: 2,
     borderColor: "rgba(255,255,255,0.10)",
   },
   previewImage: {
@@ -620,73 +599,79 @@ const styles = StyleSheet.create({
   },
   overlay: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: "rgba(5, 7, 12, 0.08)",
   },
   cornerTopLeft: {
     position: "absolute",
-    top: 18,
-    left: 18,
-    width: 56,
-    height: 56,
+    top: 42,
+    left: 22,
+    width: 28,
+    height: 28,
     borderTopWidth: 2,
     borderLeftWidth: 2,
-    borderColor: "rgba(255,255,255,0.84)",
-    borderTopLeftRadius: 18,
+    borderColor: "#DDD6FE",
+    borderTopLeftRadius: 4,
   },
   cornerTopRight: {
     position: "absolute",
-    top: 18,
-    right: 18,
-    width: 56,
-    height: 56,
+    top: 42,
+    right: 22,
+    width: 28,
+    height: 28,
     borderTopWidth: 2,
     borderRightWidth: 2,
-    borderColor: "rgba(255,255,255,0.84)",
-    borderTopRightRadius: 18,
+    borderColor: "#DDD6FE",
+    borderTopRightRadius: 4,
   },
   cornerBottomLeft: {
     position: "absolute",
-    bottom: 18,
-    left: 18,
-    width: 56,
-    height: 56,
+    bottom: 46,
+    left: 22,
+    width: 28,
+    height: 28,
     borderBottomWidth: 2,
     borderLeftWidth: 2,
-    borderColor: "rgba(255,255,255,0.84)",
-    borderBottomLeftRadius: 18,
+    borderColor: "#DDD6FE",
+    borderBottomLeftRadius: 4,
   },
   cornerBottomRight: {
     position: "absolute",
-    bottom: 18,
-    right: 18,
-    width: 56,
-    height: 56,
+    bottom: 46,
+    right: 22,
+    width: 28,
+    height: 28,
     borderBottomWidth: 2,
     borderRightWidth: 2,
-    borderColor: "rgba(255,255,255,0.84)",
-    borderBottomRightRadius: 18,
+    borderColor: "#DDD6FE",
+    borderBottomRightRadius: 4,
   },
-  navButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+  liveBadge: {
+    position: "absolute",
+    top: 14,
+    left: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: 999,
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(15, 17, 26, 0.55)",
   },
-  navButtonPressed: {
-    opacity: 0.7,
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#4ADE80",
   },
-  navButtonText: {
-    color: "#F8FAFC",
-    fontSize: 12,
+  liveText: {
+    color: COLORS.text,
+    fontSize: 11,
     fontWeight: "800",
     letterSpacing: 1.2,
   },
-  cameraFlipButton: {
+  flipButton: {
     position: "absolute",
-    top: 22,
     right: 22,
+    top: 20,
     width: 44,
     height: 44,
     borderRadius: 22,
@@ -697,92 +682,110 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.12)",
     zIndex: 2,
   },
-  cameraFlipButtonPressed: {
+  flipButtonPressed: {
     opacity: 0.7,
   },
-  cameraFlipButtonDisabled: {
+  flipButtonDisabled: {
     opacity: 0.45,
   },
-  statusBar: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+  shutterDock: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 22,
+    height: 84,
     alignItems: "center",
+    justifyContent: "center",
+  },
+  shutterRing: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    borderWidth: 4,
+    borderColor: "rgba(255,255,255,0.92)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  reviewDock: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    bottom: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     gap: 12,
-    marginTop: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 16,
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.10)",
-    flexShrink: 0,
-  },
-  statusBarPrimary: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    flexShrink: 0,
-  },
-  statusBarLabel: {
-    color: "#F8FAFC",
-    fontSize: 12,
-    fontWeight: "800",
-  },
-  statusBarDetail: {
-    flex: 1,
-    color: "#C7D2FE",
-    fontSize: 12,
-    fontWeight: "700",
-    textAlign: "right",
   },
   footer: {
-    paddingTop: 10,
-    gap: 12,
+    paddingTop: 12,
+    alignItems: "center",
     flexShrink: 0,
   },
   scanButton: {
-    height: 58,
-    borderRadius: 18,
+    width: 68,
+    height: 68,
+    borderRadius: 34,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#E9D5FF",
+    backgroundColor: COLORS.accent,
   },
   scanButtonPressed: {
-    transform: [{ scale: 0.98 }],
+    transform: [{ scale: 0.97 }],
     opacity: 0.92,
   },
   scanButtonDisabled: {
     opacity: 0.7,
   },
-  scanButtonText: {
-    color: "#05070C",
-    fontSize: 16,
-    fontWeight: "900",
-    letterSpacing: 1.4,
+  scanMark: {
+    width: 34,
+    height: 34,
   },
-  scanButtonLoadingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
+  markArm: {
+    position: "absolute",
+    width: 13,
+    height: 13,
+    borderColor: "#5B21B6",
   },
-  actionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
+  markTopLeft: {
+    top: 0,
+    left: 0,
+    borderTopWidth: 3,
+    borderLeftWidth: 3,
+    borderTopLeftRadius: 4,
+  },
+  markTopRight: {
+    top: 0,
+    right: 0,
+    borderTopWidth: 3,
+    borderRightWidth: 3,
+    borderTopRightRadius: 4,
+  },
+  markBottomLeft: {
+    bottom: 0,
+    left: 0,
+    borderBottomWidth: 3,
+    borderLeftWidth: 3,
+    borderBottomLeftRadius: 4,
+  },
+  markBottomRight: {
+    bottom: 0,
+    right: 0,
+    borderBottomWidth: 3,
+    borderRightWidth: 3,
+    borderBottomRightRadius: 4,
   },
   retakeButton: {
-    flex: 1,
-    height: 58,
-    borderRadius: 18,
+    height: 72,
+    paddingHorizontal: 18,
+    borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.06)",
+    backgroundColor: "rgba(15, 17, 26, 0.72)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.10)",
+    borderColor: "rgba(255,255,255,0.16)",
   },
   retakeButtonPressed: {
-    opacity: 0.78,
-    transform: [{ scale: 0.98 }],
+    opacity: 0.7,
   },
   retakeButtonText: {
     color: "#E2E8F0",
@@ -794,6 +797,10 @@ const styles = StyleSheet.create({
     flex: 1.7,
     height: 72,
     borderRadius: 22,
+  },
+  analyzeButtonPressed: {
+    transform: [{ scale: 0.97 }],
+    opacity: 0.92,
   },
   analyzeGlow: {
     ...StyleSheet.absoluteFill,
@@ -831,11 +838,13 @@ const styles = StyleSheet.create({
     bottom: 10,
     right: 16,
   },
-  caption: {
-    color: "#94A3B8",
-    fontSize: 12,
+  tagline: {
+    color: COLORS.textMuted,
+    fontSize: 13,
     lineHeight: 18,
+    fontWeight: "500",
     textAlign: "center",
+    marginTop: 4,
   },
   permissionCard: {
     flex: 1,
@@ -846,6 +855,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.08)",
     gap: 14,
+  },
+  brandLockup: {
+    alignItems: "center",
+    gap: 8,
   },
   brand: {
     color: "#C4B5FD",

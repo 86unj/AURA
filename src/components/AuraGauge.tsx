@@ -13,6 +13,8 @@ import Svg, {
   Stop,
 } from "react-native-svg";
 
+import { COLORS } from "../theme/game";
+
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 type AuraGaugeProps = {
@@ -66,7 +68,7 @@ export function AuraGauge({ value, color, size = 190 }: AuraGaugeProps) {
           cx={size / 2}
           cy={size / 2}
           r={radius}
-          stroke="rgba(255,255,255,0.08)"
+          stroke="rgba(255,255,255,0.12)"
           strokeWidth={strokeWidth}
           fill="none"
         />
@@ -86,14 +88,13 @@ export function AuraGauge({ value, color, size = 190 }: AuraGaugeProps) {
           cx={size / 2}
           cy={size / 2}
           r={innerRadius}
-          fill="rgba(9, 12, 22, 0.92)"
+          fill="rgba(255,255,255,0.03)"
         />
         <Circle
           cx={needleX}
           cy={needleY}
           r={needleDotRadius}
-          fill={color}
-          opacity={0.95}
+          fill={COLORS.text}
         />
       </Svg>
 
@@ -128,24 +129,20 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   scoreLabel: {
-    color: "rgba(255,255,255,0.58)",
-    fontSize: 10,
+    color: COLORS.textMuted,
     fontWeight: "800",
-    letterSpacing: 2,
+    letterSpacing: 1.5,
   },
   scoreValue: {
-    color: "#F8FAFC",
-    fontSize: 48,
-    lineHeight: 56,
+    color: COLORS.text,
     fontWeight: "900",
-    letterSpacing: -1.5,
+    letterSpacing: -1,
     marginTop: 2,
   },
   scoreRange: {
-    color: "rgba(255,255,255,0.52)",
-    fontSize: 11,
+    color: COLORS.textMuted,
     fontWeight: "700",
-    letterSpacing: 1.2,
-    marginTop: 4,
+    letterSpacing: 1,
+    marginTop: 2,
   },
 });

@@ -114,9 +114,9 @@ const styles = StyleSheet.create({
   },
   title: {
     color: "#F8FAFC",
-    fontSize: 16,
+    fontSize: 22,
     fontWeight: "900",
-    letterSpacing: 2.5,
+    letterSpacing: 1.2,
   },
   subtitle: {
     color: "#C4B5FD",

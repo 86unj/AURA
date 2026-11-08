@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { Ionicons } from "@expo/vector-icons";
 
 import { AuraGauge } from "../components/AuraGauge";
 import { ThreatBadge } from "../components/ThreatBadge";
@@ -287,32 +288,32 @@ export function HistoryScreen({ navigation }: Props) {
               styles.viewSegmentButton,
               !isGrid && styles.segmentButtonActive,
             ]}
+            accessibilityRole="button"
+            accessibilityLabel="List view"
+            accessibilityState={{ selected: !isGrid }}
             onPress={() => setViewMode("list")}
           >
-            <Text
-              style={[
-                styles.segmentText,
-                !isGrid && styles.segmentTextActive,
-              ]}
-            >
-              List
-            </Text>
+            <Ionicons
+              name={isGrid ? "list-outline" : "list"}
+              size={18}
+              color={isGrid ? "#CBD5E1" : "#05070C"}
+            />
           </Pressable>
           <Pressable
             style={[
               styles.viewSegmentButton,
               isGrid && styles.segmentButtonActive,
             ]}
+            accessibilityRole="button"
+            accessibilityLabel="Grid view"
+            accessibilityState={{ selected: isGrid }}
             onPress={() => setViewMode("grid")}
           >
-            <Text
-              style={[
-                styles.segmentText,
-                isGrid && styles.segmentTextActive,
-              ]}
-            >
-              Grid
-            </Text>
+            <Ionicons
+              name={isGrid ? "grid" : "grid-outline"}
+              size={18}
+              color={isGrid ? "#05070C" : "#CBD5E1"}
+            />
           </Pressable>
         </View>
       </View>
