@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 
+import { AppLogo } from "../components/AppLogo";
 import { useAuth } from "../context/AuthContext";
 
 export function AuthScreen() {
@@ -70,7 +71,10 @@ export function AuthScreen() {
           behavior={Platform.OS === "ios" ? "padding" : undefined}
         >
           <View style={styles.card}>
-            <Text style={styles.brand}>AURA</Text>
+            <View style={styles.brandLockup}>
+              <AppLogo size={88} />
+              <Text style={styles.brand}>AURA</Text>
+            </View>
             <Text style={styles.title}>
               {isSignUp ? "Create your account" : "Welcome back"}
             </Text>
@@ -166,11 +170,16 @@ const styles = StyleSheet.create({
     padding: 22,
     gap: 14,
   },
+  brandLockup: {
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 4,
+  },
   brand: {
     color: "#C4B5FD",
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: "900",
-    letterSpacing: 2.2,
+    letterSpacing: 3,
   },
   title: {
     color: "#F8FAFC",

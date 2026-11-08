@@ -1,4 +1,3 @@
-import { ActivityIndicator, StyleSheet, View } from "react-native";
 import { NavigationContainer, DefaultTheme } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
@@ -26,11 +25,7 @@ function RootNavigator() {
   const { session, loading } = useAuth();
 
   if (loading) {
-    return (
-      <View style={styles.loadingShell}>
-        <ActivityIndicator color="#C4B5FD" />
-      </View>
-    );
+    return null;
   }
 
   return (
@@ -68,12 +63,3 @@ export default function App() {
     </SafeAreaProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  loadingShell: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#05070c",
-  },
-});
