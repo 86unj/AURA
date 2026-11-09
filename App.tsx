@@ -8,6 +8,8 @@ import { CameraScreen } from "./src/screens/CameraScreen";
 import { AuraReportScreen } from "./src/screens/AuraReportScreen";
 import { HistoryScreen } from "./src/screens/HistoryScreen";
 import { DailyAuraScreen } from "./src/screens/DailyAuraScreen";
+import { RemoteCameraScreen } from "./src/screens/RemoteCameraScreen";
+import { AuraLabScreen } from "./src/screens/AuraLabScreen";
 import { AuthProvider, useAuth } from "./src/context/AuthContext";
 import { RootStackParamList } from "./src/navigation/types";
 
@@ -43,6 +45,8 @@ function RootNavigator() {
           <Stack.Screen name="History" component={HistoryScreen} />
           <Stack.Screen name="AuraReport" component={AuraReportScreen} />
           <Stack.Screen name="DailyAura" component={DailyAuraScreen} />
+          <Stack.Screen name="RemoteCamera" component={RemoteCameraScreen} />
+          <Stack.Screen name="AuraLab" component={AuraLabScreen} />
         </>
       ) : (
         <Stack.Screen name="Auth" component={AuthScreen} />

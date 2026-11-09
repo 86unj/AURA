@@ -15,4 +15,6 @@ export type RootStackParamList = {
       }
     | undefined;
   DailyAura: undefined;
+  RemoteCamera: undefined;
+  AuraLab: undefined;
 };
