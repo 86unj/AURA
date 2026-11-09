@@ -34,6 +34,7 @@ import Animated, {
 
 
 import { AppLogo } from "../components/AppLogo";
+import { MenuButton, MenuItem } from "../components/MenuButton";
 import { ScanningOverlay } from "../components/ScanningOverlay";
 import { COLORS } from "../theme/game";
 // import { ProfileAvatar } from "../components/ProfileAvatar";
@@ -317,6 +318,39 @@ export function CameraScreen({ navigation, route }: Props) {
     });
   }
 
+  const menuItems: MenuItem[] = [
+    {
+      key: "scan",
+      label: "Scan",
+      icon: "scan-outline",
+      onPress: () => navigation.navigate("Camera", { dailyMode: false }),
+    },
+    {
+      key: "daily",
+      label: "Daily aura",
+      icon: "sunny-outline",
+      onPress: () => navigation.navigate("DailyAura"),
+    },
+    {
+      key: "history",
+      label: "History",
+      icon: "time-outline",
+      onPress: () => navigation.navigate("History"),
+    },
+    {
+      key: "remote",
+      label: "Remote camera",
+      icon: "phone-portrait-outline",
+      onPress: () => navigation.navigate("RemoteCamera"),
+    },
+    {
+      key: "auralab",
+      label: "Aura lab",
+      icon: "sparkles-outline",
+      onPress: () => navigation.navigate("AuraLab"),
+    },
+  ];
+
   if (!permission) {
     return (
       <SafeAreaView style={styles.screenShell}>
@@ -335,10 +369,10 @@ export function CameraScreen({ navigation, route }: Props) {
     return (
       <SafeAreaView style={styles.screenShell}>
         <View style={styles.permissionCard}>
-          <View style={styles.brandLockup}>
+          {/* <View style={styles.brandLockup}>
             <AppLogo size={88} />
             <Text style={styles.brand}>AURA</Text>
-          </View>
+          </View> */}
           <Text style={styles.permissionTitle}>Camera access needed</Text>
           <Text style={styles.permissionBody}>
             To scan an aura, Aura needs the camera. Nothing is saved unless you
@@ -367,10 +401,10 @@ export function CameraScreen({ navigation, route }: Props) {
     return (
       <SafeAreaView style={styles.screenShell}>
         <View style={styles.permissionCard}>
-          <View style={styles.brandLockup}>
+          {/* <View style={styles.brandLockup}>
             <AppLogo size={88} />
             <Text style={styles.brand}>AURA</Text>
-          </View>
+          </View> */}
           <Text style={styles.permissionTitle}>Camera access denied</Text>
           <Text style={styles.permissionBody}>
             Open Settings and allow camera access, then return here.
@@ -401,41 +435,18 @@ export function CameraScreen({ navigation, route }: Props) {
   return (
     <SafeAreaView style={styles.screenShell}>
       <View style={styles.topBar}>
-        <Text style={styles.wordmark}>aura.</Text>
-        {!dailyMode ? (
-          <View style={styles.headerNav}>
-            <Pressable
-              onPress={() => navigation.navigate("DailyAura")}
-              disabled={isBusy}
-              style={({ pressed }) => pressed && styles.navPressed}
-            >
-              <Text style={styles.navDaily}>Daily</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => navigation.navigate("History")}
-              disabled={isBusy}
-              style={({ pressed }) => pressed && styles.navPressed}
-            >
-              <Text style={styles.navHistory}>History</Text>
-            </Pressable>
-          </View>
-        ) : (
-          <Pressable
-            onPress={() => navigation.goBack()}
-            disabled={isBusy}
-            style={({ pressed }) => pressed && styles.navPressed}
-          >
-            <Text style={styles.navHistory}>Back</Text>
-          </Pressable>
-        )}
+        <View style={styles.headerCopy}>
+          <Text style={styles.title}>What's it giving?</Text>
+          <Text style={styles.subtitle}>
+            {dailyMode
+              ? "Point at anything. Tap to lock in today."
+              : "Point at anything. Tap to find out."}
+          </Text>
+        </View>
+        <MenuButton items={menuItems} disabled={isBusy} />
       </View>
 
-      <Text style={styles.title}>What's it giving?</Text>
-      <Text style={styles.subtitle}>
-        {dailyMode
-          ? "Point at anything. Tap to lock in today."
-          : "Point at anything. Tap to find out."}
-      </Text>
+      
 
       <View style={styles.previewFrame}>
         {capturedUri ? (
@@ -545,11 +556,15 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 18,
+    marginBottom: 12,
+  },
+  headerCopy: {
+    flex: 1,
+    paddingRight: 12,
   },
   wordmark: {
     color: COLORS.text,
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: "800",
     letterSpacing: -0.8,
   },
@@ -573,18 +588,17 @@ const styles = StyleSheet.create({
   },
   title: {
     color: COLORS.text,
-    fontSize: 34,
-    lineHeight: 40,
+    fontSize: 22,
+    lineHeight: 28,
     fontWeight: "800",
-    letterSpacing: -0.8,
+    letterSpacing: -0.5,
   },
   subtitle: {
     color: "#C4B5FD",
-    fontSize: 16,
-    lineHeight: 22,
+    fontSize: 13,
+    lineHeight: 18,
     fontWeight: "500",
-    marginTop: 4,
-    marginBottom: 16,
+    marginTop: 2,
   },
   previewFrame: {
     flex: 1,
