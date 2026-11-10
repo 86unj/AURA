@@ -1,4 +1,4 @@
-import { ReactNode, useState } from "react";
+import { ComponentRef, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -8,6 +8,13 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { COLORS } from "../theme/game";
 import { RootStackParamList } from "../navigation/types";
+import { useAuth } from "../context/AuthContext";
+import {
+  getIceServers,
+  joinSignalingChannel,
+  SignalingChannel,
+  SignalMessage,
+} from "../services/remoteSignaling";
 
 type Props = NativeStackScreenProps<RootStackParamList, "RemoteCamera">;
 
@@ -18,20 +25,81 @@ type Props = NativeStackScreenProps<RootStackParamList, "RemoteCamera">;
  */
 const PHONE_CAMERA_URL = process.env.EXPO_PUBLIC_REMOTE_CAMERA_URL ?? "";
 
-type PageMessage = { type: string; message: string };
+type LinkState = "waiting" | "connecting" | "connected" | "failed";
+
+type PageMessage =
+  | { type: "page-ready" }
+  | { type: "signal"; kind: SignalMessage["kind"]; data?: unknown }
+  | { type: "status"; state: LinkState; message: string }
+  | { type: "error"; message: string };
+
+const LINK_LABEL: Record<LinkState, string> = {
+  waiting: "WAITING",
+  connecting: "CONNECTING",
+  connected: "LIVE",
+  failed: "RETRYING",
+};
+
+const LINK_COLOR: Record<LinkState, string> = {
+  waiting: "#94A3B8",
+  connecting: "#FBBF24",
+  connected: "#4ADE80",
+  failed: "#F87171",
+};
 
 export function RemoteCameraScreen({ navigation }: Props) {
   // The app itself must hold camera permission before the WebView can use it.
   const [permission, requestPermission] = useCameraPermissions();
-  const [pageStatus, setPageStatus] = useState<PageMessage | null>(null);
+  const { user } = useAuth();
+  const webviewRef = useRef<ComponentRef<typeof WebView> | null>(null);
+  const channelRef = useRef<SignalingChannel | null>(null);
+  const [linkState, setLinkState] = useState<LinkState>("waiting");
+  const [errorText, setErrorText] = useState<string | null>(null);
+
+  // ICE config is handed to the page before it loads.
+  const injectedConfig = useMemo(
+    () => `window.AURA_CONFIG = ${JSON.stringify({ iceServers: getIceServers() })}; true;`,
+    [],
+  );
+
+  // Relay signaling between the Supabase channel and the page.
+  useEffect(() => {
+    if (!user) return;
+    const channel = joinSignalingChannel(user.id, "phone", (message) => {
+      const script = `window.auraOnSignal && window.auraOnSignal(${JSON.stringify(message)}); true;`;
+      webviewRef.current?.injectJavaScript(script);
+    });
+    channelRef.current = channel;
+    channel.ready.catch((error) =>
+      setErrorText(error instanceof Error ? error.message : "Could not reach the signaling server."),
+    );
+    return () => {
+      channelRef.current = null;
+      channel.leave().catch(() => {});
+    };
+  }, [user]);
 
   function handleMessage(event: WebViewMessageEvent) {
+    let data: PageMessage;
     try {
-      const data = JSON.parse(event.nativeEvent.data) as PageMessage;
-      setPageStatus(data);
-      console.log("[phone-camera]", data.type, data.message);
+      data = JSON.parse(event.nativeEvent.data) as PageMessage;
     } catch {
-      // Ignore non-JSON messages.
+      return; // Ignore non-JSON messages.
+    }
+    switch (data.type) {
+      case "page-ready":
+        setErrorText(null);
+        channelRef.current?.send("phone-hello");
+        break;
+      case "signal":
+        channelRef.current?.send(data.kind, data.data);
+        break;
+      case "status":
+        setLinkState(data.state);
+        break;
+      case "error":
+        setErrorText(data.message);
+        break;
     }
   }
 
@@ -84,7 +152,9 @@ export function RemoteCameraScreen({ navigation }: Props) {
     body = (
       <View style={styles.previewFrame}>
         <WebView
+          ref={webviewRef}
           source={{ uri: PHONE_CAMERA_URL }}
+          injectedJavaScriptBeforeContentLoaded={injectedConfig}
           style={styles.webview}
           originWhitelist={["https://*"]}
           javaScriptEnabled
@@ -92,13 +162,15 @@ export function RemoteCameraScreen({ navigation }: Props) {
           mediaPlaybackRequiresUserAction={false}
           mediaCapturePermissionGrantType="grant"
           onMessage={handleMessage}
-          onError={(event) =>
-            setPageStatus({ type: "error", message: event.nativeEvent.description })
-          }
+          onError={(event) => setErrorText(event.nativeEvent.description)}
         />
-        {pageStatus?.type === "error" ? (
+        <View style={styles.liveBadge} accessibilityRole="text">
+          <View style={[styles.liveDot, { backgroundColor: LINK_COLOR[linkState] }]} />
+          <Text style={styles.liveText}>{LINK_LABEL[linkState]}</Text>
+        </View>
+        {errorText ? (
           <View style={styles.errorBanner}>
-            <Text style={styles.errorText}>{pageStatus.message}</Text>
+            <Text style={styles.errorText}>{errorText}</Text>
           </View>
         ) : null}
       </View>
@@ -139,9 +211,23 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   webview: { flex: 1, backgroundColor: "#000" },
+  liveBadge: {
+    position: "absolute",
+    top: 14,
+    left: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: "rgba(15, 17, 26, 0.55)",
+  },
+  liveDot: { width: 8, height: 8, borderRadius: 4 },
+  liveText: { color: COLORS.text, fontSize: 11, fontWeight: "800", letterSpacing: 1.2 },
   errorBanner: {
     position: "absolute",
-    top: 12,
+    top: 52,
     left: 12,
     right: 12,
     padding: 10,

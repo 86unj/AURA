@@ -59,19 +59,164 @@
     <div id="status" role="status" aria-live="polite">Starting…</div>
 
     <script>
-      // Spike: prove getUserMedia works inside the Expo Go WebView.
-      // WebRTC + signaling will be added on top of this page next.
+      /*
+       * Phone side of the phone → laptop link. Runs inside the app's WebView.
+       * This page has no network access to Supabase itself: signaling
+       * messages are relayed by the React Native app via postMessage
+       * (page → app) and window.auraOnSignal (app → page).
+       * See src/services/remoteSignaling.ts for the protocol.
+       */
+      const config = window.AURA_CONFIG || {
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+      };
+      const MAX_BITRATE = 2500000;
+
       const video = document.getElementById("preview");
       const statusEl = document.getElementById("status");
       const startButton = document.getElementById("start");
 
-      function report(type, message) {
-        statusEl.textContent = message;
-        // Forward to React Native when running inside the app's WebView.
+      let stream = null;
+      let pc = null;
+      let offerId = null;
+      let laptopSession = null;
+      let pendingIce = [];
+      let retryTimer = null;
+
+      function post(type, payload) {
         if (window.ReactNativeWebView) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({ type, message }));
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type, ...payload }));
         }
       }
+
+      function report(type, message) {
+        statusEl.textContent = message;
+        post(type, { message });
+      }
+
+      function setLinkState(state, message) {
+        statusEl.textContent = message;
+        post("status", { state, message });
+      }
+
+      function sendSignal(kind, data) {
+        post("signal", { kind, data });
+      }
+
+      function closePeer() {
+        if (pc) {
+          pc.onicecandidate = null;
+          pc.onconnectionstatechange = null;
+          pc.close();
+        }
+        pc = null;
+        offerId = null;
+        pendingIce = [];
+      }
+
+      function scheduleRetry() {
+        clearTimeout(retryTimer);
+        retryTimer = setTimeout(() => sendSignal("phone-hello"), 3000);
+      }
+
+      async function tuneSender(peer) {
+        // Favor smooth motion over sharpness: the aura effect needs frame rate.
+        for (const sender of peer.getSenders()) {
+          if (!sender.track || sender.track.kind !== "video") continue;
+          try {
+            const params = sender.getParameters();
+            if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+            params.encodings[0].maxBitrate = MAX_BITRATE;
+            params.degradationPreference = "maintain-framerate";
+            await sender.setParameters(params);
+          } catch (error) {
+            console.warn("setParameters failed", error);
+          }
+        }
+      }
+
+      async function makeOffer() {
+        closePeer();
+        const id = Math.random().toString(36).slice(2);
+        offerId = id;
+        const peer = new RTCPeerConnection({ iceServers: config.iceServers });
+        pc = peer;
+
+        stream.getTracks().forEach((track) => peer.addTrack(track, stream));
+        peer.onicecandidate = (event) => {
+          if (event.candidate) {
+            sendSignal("ice", { offerId: id, candidate: event.candidate.toJSON() });
+          }
+        };
+        peer.onconnectionstatechange = () => {
+          if (pc !== peer) return;
+          const state = peer.connectionState;
+          if (state === "connected") {
+            clearTimeout(retryTimer);
+            setLinkState("connected", "Live · streaming to laptop");
+          } else if (state === "connecting") {
+            setLinkState("connecting", "Connecting to laptop…");
+          } else if (state === "failed") {
+            setLinkState("failed", "Connection failed. Retrying…");
+            scheduleRetry();
+          } else if (state === "disconnected") {
+            setLinkState("connecting", "Connection unstable…");
+          }
+        };
+
+        setLinkState("connecting", "Connecting to laptop…");
+        const offer = await peer.createOffer();
+        await peer.setLocalDescription(offer);
+        sendSignal("offer", { offerId: id, sdp: offer.sdp });
+        await tuneSender(peer);
+      }
+
+      async function handleSignal(message) {
+        if (!stream || !message) return;
+        const data = message.data || {};
+        switch (message.kind) {
+          case "laptop-ready": {
+            const alive =
+              pc && ["new", "connecting", "connected"].includes(pc.connectionState);
+            // Same laptop and the link is fine: nothing to do.
+            if (alive && data.sessionId === laptopSession) return;
+            laptopSession = data.sessionId;
+            await makeOffer();
+            break;
+          }
+          case "answer": {
+            if (!pc || data.offerId !== offerId) return;
+            await pc.setRemoteDescription({ type: "answer", sdp: data.sdp });
+            const early = pendingIce;
+            pendingIce = [];
+            for (const candidate of early) {
+              await pc.addIceCandidate(candidate).catch(() => {});
+            }
+            break;
+          }
+          case "ice": {
+            if (!pc || data.offerId !== offerId || !data.candidate) return;
+            if (pc.remoteDescription) {
+              await pc.addIceCandidate(data.candidate).catch(() => {});
+            } else {
+              pendingIce.push(data.candidate);
+            }
+            break;
+          }
+          case "bye": {
+            closePeer();
+            laptopSession = null;
+            setLinkState("waiting", "Waiting for laptop… open Aura lab on your laptop.");
+            break;
+          }
+        }
+      }
+
+      // Called by the React Native app with messages from the laptop.
+      window.auraOnSignal = (message) => {
+        handleSignal(message).catch((error) =>
+          report("error", `Signaling error: ${error.message || error}`),
+        );
+      };
 
       async function startCamera() {
         startButton.style.display = "none";
@@ -83,8 +228,12 @@
           report("error", "getUserMedia is not available in this WebView.");
           return;
         }
+        if (typeof RTCPeerConnection !== "function") {
+          report("error", "WebRTC is not available in this WebView.");
+          return;
+        }
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({
+          stream = await navigator.mediaDevices.getUserMedia({
             video: {
               facingMode: { ideal: "environment" },
               width: { ideal: 1280 },
@@ -93,14 +242,12 @@
             },
             audio: false,
           });
+          const track = stream.getVideoTracks()[0];
+          if ("contentHint" in track) track.contentHint = "motion";
           video.srcObject = stream;
           await video.play().catch(() => {});
-          const settings = stream.getVideoTracks()[0].getSettings();
-          report(
-            "camera-ok",
-            `Camera OK · ${settings.width}x${settings.height} @ ${Math.round(settings.frameRate || 0)} fps\n` +
-              `RTCPeerConnection: ${typeof RTCPeerConnection === "function" ? "yes" : "no"}`,
-          );
+          setLinkState("waiting", "Waiting for laptop… open Aura lab on your laptop.");
+          post("page-ready", {});
         } catch (error) {
           report("error", `Camera failed: ${error.name}: ${error.message}`);
           // Some WebViews need a user gesture before opening the camera.

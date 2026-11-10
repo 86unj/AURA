@@ -9,6 +9,8 @@ import { COLORS } from "../theme/game";
 import { RootStackParamList } from "../navigation/types";
 import { analyzeAura } from "../services/analyzeAura";
 import { AuraRenderer, createAuraRenderer, GlowMode } from "../effects/auraRenderer";
+import { useAuth } from "../context/AuthContext";
+import { PhoneReceiver, ReceiverStatus, startPhoneReceiver } from "../services/phoneReceiver";
 
 type Props = NativeStackScreenProps<RootStackParamList, "AuraLab">;
 
@@ -32,14 +34,22 @@ const AURA_COLORS = [
   { name: "Gold", rgb: [250, 204, 21] },
 ] as const;
 
-/** Width of the frame fed to the segmenter. The mask comes back at this size. */
-const SEG_WIDTH = 384;
+/** Long side of the frame fed to the segmenter. The mask comes back at this size. */
+const SEG_SIZE = 384;
 /** Temporal mask smoothing: higher = snappier, lower = steadier. */
 const SMOOTHING = 0.6;
 /** Width of the photo sent to the AI (same as CameraScreen). */
 const CAPTURE_WIDTH = 640;
 
 type Phase = "live" | "frozen" | "analyzing";
+type VideoSource = "phone" | "webcam";
+
+const PHONE_STATUS_TEXT: Record<ReceiverStatus, string> = {
+  waiting: "Waiting for phone… open Remote camera on your phone (same account).",
+  connecting: "Phone found, connecting…",
+  connected: "Phone connected, waiting for video…",
+  error: "Connection problem.",
+};
 
 type RenderSettings = {
   frozen: boolean;
@@ -62,6 +72,11 @@ export function AuraLabScreen({ navigation }: Props) {
   const [phase, setPhase] = useState<Phase>("live");
   const [mode, setMode] = useState<GlowMode>("outer");
   const [colorIndex, setColorIndex] = useState(0);
+  const { user } = useAuth();
+  const [source, setSource] = useState<VideoSource>("phone");
+  const [hasVideo, setHasVideo] = useState(false);
+  const [phoneStatus, setPhoneStatus] = useState<ReceiverStatus>("waiting");
+  const [sourceError, setSourceError] = useState("");
 
   useEffect(() => {
     const video = videoRef.current;
@@ -71,7 +86,6 @@ export function AuraLabScreen({ navigation }: Props) {
     let cancelled = false;
     let segmenter: ImageSegmenter | null = null;
     let renderer: AuraRenderer | null = null;
-    let stream: MediaStream | null = null;
     let rafId = 0;
     let videoCallbackId = 0;
     let delegate = "";
@@ -114,14 +128,17 @@ export function AuraLabScreen({ navigation }: Props) {
       const h = video!.videoHeight;
       if (!w || !h) return;
 
-      const segH = Math.round((SEG_WIDTH * h) / w);
-      if (segCanvas.width !== SEG_WIDTH || segCanvas.height !== segH) {
-        segCanvas.width = SEG_WIDTH;
+      // Scale the long side to SEG_SIZE (works for landscape and portrait phones).
+      const scale = SEG_SIZE / Math.max(w, h);
+      const segW = Math.round(w * scale);
+      const segH = Math.round(h * scale);
+      if (segCanvas.width !== segW || segCanvas.height !== segH) {
+        segCanvas.width = segW;
         segCanvas.height = segH;
       }
 
       const t0 = performance.now();
-      segCtx.drawImage(video!, 0, 0, SEG_WIDTH, segH);
+      segCtx.drawImage(video!, 0, 0, segW, segH);
       segmenter.segmentForVideo(segCanvas, t0, (result) => {
         onMasks(result.confidenceMasks);
       });
@@ -150,41 +167,43 @@ export function AuraLabScreen({ navigation }: Props) {
       }
     }
 
+    let pending = false;
     function schedule() {
-      if (cancelled) return;
-      // Process each new camera frame exactly once; fall back to rAF.
+      // Only one callback in flight, even if kicked by several events.
+      if (cancelled || pending || !segmenter) return;
+      pending = true;
+      const tick = () => {
+        pending = false;
+        renderFrame();
+        schedule();
+      };
+      // Process each new video frame exactly once; fall back to rAF.
       if ("requestVideoFrameCallback" in video!) {
-        videoCallbackId = video!.requestVideoFrameCallback(() => {
-          renderFrame();
-          schedule();
-        });
+        videoCallbackId = video!.requestVideoFrameCallback(tick);
       } else {
-        rafId = requestAnimationFrame(() => {
-          renderFrame();
-          schedule();
-        });
+        rafId = requestAnimationFrame(tick);
       }
     }
+
+    // Restart the frame loop whenever a (new) source starts playing.
+    // A callback registered before the source changed may never fire, so
+    // cancel it and register a fresh one.
+    const kick = () => {
+      if (pending) {
+        if (videoCallbackId && "cancelVideoFrameCallback" in video) {
+          video.cancelVideoFrameCallback(videoCallbackId);
+        }
+        cancelAnimationFrame(rafId);
+        pending = false;
+      }
+      schedule();
+    };
+    video.addEventListener("playing", kick);
+    video.addEventListener("loadeddata", kick);
 
     async function start() {
       try {
         renderer = createAuraRenderer(canvas!);
-
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-            frameRate: { ideal: 30 },
-            facingMode: "user",
-          },
-          audio: false,
-        });
-        if (cancelled) {
-          stream.getTracks().forEach((track) => track.stop());
-          return;
-        }
-        video!.srcObject = stream;
-        await video!.play();
 
         const { FilesetResolver, ImageSegmenter } = await loadVisionModule(BUNDLE_URL);
         const vision = await FilesetResolver.forVisionTasks(WASM_URL);
@@ -228,11 +247,72 @@ export function AuraLabScreen({ navigation }: Props) {
       if (videoCallbackId && "cancelVideoFrameCallback" in video) {
         video.cancelVideoFrameCallback(videoCallbackId);
       }
-      stream?.getTracks().forEach((track) => track.stop());
+      video.removeEventListener("playing", kick);
+      video.removeEventListener("loadeddata", kick);
       segmenter?.close();
       renderer?.dispose();
     };
   }, []);
+
+  // Video source: the phone over WebRTC, or the laptop webcam for testing.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    let cancelled = false;
+    let webcam: MediaStream | null = null;
+    let receiver: PhoneReceiver | null = null;
+
+    function attach(stream: MediaStream | null) {
+      video!.srcObject = stream;
+      setHasVideo(Boolean(stream));
+      if (stream) video!.play().catch(() => {});
+    }
+
+    setSourceError("");
+    if (source === "webcam") {
+      setPhoneStatus("waiting");
+      navigator.mediaDevices
+        .getUserMedia({
+          video: {
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 30 },
+            facingMode: "user",
+          },
+          audio: false,
+        })
+        .then((stream) => {
+          if (cancelled) {
+            stream.getTracks().forEach((track) => track.stop());
+            return;
+          }
+          webcam = stream;
+          attach(stream);
+        })
+        .catch((error) =>
+          setSourceError(error instanceof Error ? error.message : "Could not open the webcam."),
+        );
+    } else if (user) {
+      receiver = startPhoneReceiver(user.id, {
+        onStream: (stream) => {
+          if (!cancelled) attach(stream);
+        },
+        onStatus: (status, detail) => {
+          if (cancelled) return;
+          setPhoneStatus(status);
+          setSourceError(status === "error" ? detail ?? "Connection error." : "");
+        },
+      });
+    }
+
+    return () => {
+      cancelled = true;
+      webcam?.getTracks().forEach((track) => track.stop());
+      receiver?.stop().catch(() => {});
+      video.srcObject = null;
+      setHasVideo(false);
+    };
+  }, [source, user]);
 
   function captureRawFrame(): string | null {
     const video = videoRef.current;
@@ -249,7 +329,7 @@ export function AuraLabScreen({ navigation }: Props) {
 
   /** Step 1: freeze the screen. Nothing is sent yet. */
   function handleCapture() {
-    if (phase !== "live" || loadState !== "ready") return;
+    if (phase !== "live" || !ready) return;
     const base64 = captureRawFrame();
     if (!base64) return;
     frozenFrame.current = base64;
@@ -280,11 +360,19 @@ export function AuraLabScreen({ navigation }: Props) {
     width: "100%",
     height: "100%",
     objectFit: "contain",
-    transform: "scaleX(-1)", // mirror like a selfie camera
+    // Mirror the selfie webcam only; the phone's back camera is not mirrored.
+    transform: source === "webcam" ? "scaleX(-1)" : "none",
     display: "block",
+    visibility: hasVideo || phase !== "live" ? "visible" : "hidden",
   };
 
-  const ready = loadState === "ready";
+  const ready = loadState === "ready" && hasVideo;
+
+  function switchSource(next: VideoSource) {
+    if (next === source) return;
+    handleRetake();
+    setSource(next);
+  }
 
   return (
     <SafeAreaView style={styles.shell}>
@@ -316,7 +404,19 @@ export function AuraLabScreen({ navigation }: Props) {
         {loadState === "loading" ? (
           <View style={styles.overlay}>
             <ActivityIndicator color={COLORS.accentMuted} />
-            <Text style={styles.overlayText}>Starting camera and model…</Text>
+            <Text style={styles.overlayText}>Loading aura model…</Text>
+          </View>
+        ) : null}
+        {loadState === "ready" && !hasVideo && phase === "live" ? (
+          <View style={styles.overlay}>
+            {phoneStatus === "connecting" ? <ActivityIndicator color={COLORS.accentMuted} /> : null}
+            <Text style={styles.overlayTitle}>
+              {source === "phone" ? "Phone camera" : "Webcam"}
+            </Text>
+            <Text style={styles.overlayText}>
+              {sourceError ||
+                (source === "phone" ? PHONE_STATUS_TEXT[phoneStatus] : "Opening webcam…")}
+            </Text>
           </View>
         ) : null}
         {loadState === "error" ? (
@@ -367,6 +467,35 @@ export function AuraLabScreen({ navigation }: Props) {
               </Pressable>
             ))}
           </View>
+        </View>
+
+        <View style={styles.row}>
+          <Text style={styles.label}>Source</Text>
+          {(["phone", "webcam"] as const).map((s) => (
+            <Pressable
+              key={s}
+              accessibilityRole="button"
+              accessibilityLabel={`Use ${s} camera`}
+              onPress={() => switchSource(s)}
+              style={[styles.chip, source === s && styles.chipActive]}
+            >
+              <Text style={styles.chipText}>{s === "phone" ? "Phone" : "Webcam"}</Text>
+            </Pressable>
+          ))}
+          {source === "phone" ? (
+            <View style={styles.linkState}>
+              <View
+                style={[
+                  styles.linkDot,
+                  {
+                    backgroundColor:
+                      hasVideo ? "#4ADE80" : phoneStatus === "error" ? "#F87171" : "#FBBF24",
+                  },
+                ]}
+              />
+              <Text style={styles.chipText}>{hasVideo ? "Live" : phoneStatus}</Text>
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.row}>
@@ -472,6 +601,9 @@ const styles = StyleSheet.create({
     borderColor: "transparent",
   },
   swatchActive: { borderColor: "#fff" },
+  label: { color: COLORS.textMuted, fontSize: 12, fontWeight: "700" },
+  linkState: { marginLeft: "auto", flexDirection: "row", alignItems: "center", gap: 6 },
+  linkDot: { width: 8, height: 8, borderRadius: 4 },
   modeGroup: { marginLeft: "auto", flexDirection: "row", gap: 8 },
   chip: {
     paddingHorizontal: 12,
