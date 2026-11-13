@@ -1,5 +1,11 @@
 import { CSSProperties, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
@@ -35,7 +41,7 @@ const AURA_COLORS = [
 ] as const;
 
 /** Long side of the frame fed to the segmenter. The mask comes back at this size. */
-const SEG_SIZE = 384;
+const SEG_SIZE = 640;
 /** Temporal mask smoothing: higher = snappier, lower = steadier. */
 const SMOOTHING = 0.6;
 /** Width of the photo sent to the AI (same as CameraScreen). */
@@ -62,21 +68,26 @@ type Stats = { fps: number; segMs: number; size: string; delegate: string };
 export function AuraLabScreen({ navigation }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const settings = useRef<RenderSettings>({ frozen: false, mode: "outer", colorIndex: 0 });
+  const settings = useRef<RenderSettings>({ frozen: false, mode: "both", colorIndex: 0 });
   const frozenFrame = useRef<string | null>(null);
   const analyzeToken = useRef(0);
+  const sourceRef = useRef<VideoSource>("phone");
+  // Phone cameras often send landscape sensor buffers; draw upright here so
+  // WebGL/segmentation match what you see on the phone (and capture stays upright).
+  const uprightCanvas = useRef<HTMLCanvasElement | null>(null);
 
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [errorText, setErrorText] = useState("");
   const [stats, setStats] = useState<Stats>({ fps: 0, segMs: 0, size: "", delegate: "" });
   const [phase, setPhase] = useState<Phase>("live");
-  const [mode, setMode] = useState<GlowMode>("outer");
+  const [mode, setMode] = useState<GlowMode>("both");
   const [colorIndex, setColorIndex] = useState(0);
   const { user } = useAuth();
   const [source, setSource] = useState<VideoSource>("phone");
   const [hasVideo, setHasVideo] = useState(false);
   const [phoneStatus, setPhoneStatus] = useState<ReceiverStatus>("waiting");
   const [sourceError, setSourceError] = useState("");
+  sourceRef.current = source;
 
   useEffect(() => {
     const video = videoRef.current;
@@ -94,6 +105,9 @@ export function AuraLabScreen({ navigation }: Props) {
     // makes MediaPipe return a full-size mask, which is what made it slow.
     const segCanvas = document.createElement("canvas");
     const segCtx = segCanvas.getContext("2d", { willReadFrequently: false });
+    const upright = document.createElement("canvas");
+    uprightCanvas.current = upright;
+    const uprightCtx = upright.getContext("2d", { alpha: false });
 
     let smooth: Float32Array | null = null;
     let maskBytes: Uint8Array | null = null;
@@ -121,12 +135,33 @@ export function AuraLabScreen({ navigation }: Props) {
       renderer.setMask(out, mask.width, mask.height);
     }
 
+    /** When the phone sends a landscape buffer while held upright, rotate 90° CW. */
+    function uprightFrame(
+      vw: number,
+      vh: number,
+    ): { source: HTMLVideoElement | HTMLCanvasElement; w: number; h: number } {
+      const needsRotate = sourceRef.current === "phone" && vw > vh;
+      if (!needsRotate || !uprightCtx) return { source: video!, w: vw, h: vh };
+      if (upright.width !== vh || upright.height !== vw) {
+        upright.width = vh;
+        upright.height = vw;
+      }
+      uprightCtx.save();
+      uprightCtx.translate(vh, 0);
+      uprightCtx.rotate(Math.PI / 2);
+      uprightCtx.drawImage(video!, 0, 0, vw, vh);
+      uprightCtx.restore();
+      return { source: upright, w: vh, h: vw };
+    }
+
     function renderFrame() {
       if (cancelled || !segmenter || !renderer || !segCtx) return;
       if (settings.current.frozen || video!.readyState < 2) return;
-      const w = video!.videoWidth;
-      const h = video!.videoHeight;
-      if (!w || !h) return;
+      const vw = video!.videoWidth;
+      const vh = video!.videoHeight;
+      if (!vw || !vh) return;
+
+      const { source: frame, w, h } = uprightFrame(vw, vh);
 
       // Scale the long side to SEG_SIZE (works for landscape and portrait phones).
       const scale = SEG_SIZE / Math.max(w, h);
@@ -138,14 +173,14 @@ export function AuraLabScreen({ navigation }: Props) {
       }
 
       const t0 = performance.now();
-      segCtx.drawImage(video!, 0, 0, segW, segH);
+      segCtx.drawImage(frame, 0, 0, segW, segH);
       segmenter.segmentForVideo(segCanvas, t0, (result) => {
         onMasks(result.confidenceMasks);
       });
       const t1 = performance.now();
 
       const { mode: glowMode, colorIndex: ci } = settings.current;
-      renderer.render(video!, {
+      renderer.render(frame, {
         color: AURA_COLORS[ci].rgb,
         mode: glowMode,
         timeSeconds: t1 / 1000,
@@ -317,12 +352,34 @@ export function AuraLabScreen({ navigation }: Props) {
   function captureRawFrame(): string | null {
     const video = videoRef.current;
     if (!video || !video.videoWidth) return null;
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    const rotate = sourceRef.current === "phone" && vw > vh;
+    const srcW = rotate ? vh : vw;
+    const srcH = rotate ? vw : vh;
     const out = document.createElement("canvas");
     out.width = CAPTURE_WIDTH;
-    out.height = Math.round((video.videoHeight * CAPTURE_WIDTH) / video.videoWidth);
+    out.height = Math.round((srcH * CAPTURE_WIDTH) / srcW);
     const ctx = out.getContext("2d");
     if (!ctx) return null;
-    ctx.drawImage(video, 0, 0, out.width, out.height);
+    if (rotate) {
+      // Same 90° CW upright as the live preview.
+      const tmp = uprightCanvas.current ?? document.createElement("canvas");
+      if (tmp.width !== vh || tmp.height !== vw) {
+        tmp.width = vh;
+        tmp.height = vw;
+      }
+      const tctx = tmp.getContext("2d");
+      if (!tctx) return null;
+      tctx.save();
+      tctx.translate(vh, 0);
+      tctx.rotate(Math.PI / 2);
+      tctx.drawImage(video, 0, 0, vw, vh);
+      tctx.restore();
+      ctx.drawImage(tmp, 0, 0, out.width, out.height);
+    } else {
+      ctx.drawImage(video, 0, 0, out.width, out.height);
+    }
     // Raw camera frame (no aura overlay) is what goes to the AI.
     return out.toDataURL("image/jpeg", 0.78).split(",")[1] ?? null;
   }
@@ -386,9 +443,10 @@ export function AuraLabScreen({ navigation }: Props) {
         >
           <Ionicons name="chevron-back" size={24} color={COLORS.text} />
         </Pressable>
-        <Text style={styles.title}>AURA LAB</Text>
+        <Text style={styles.title}>Aura Lab</Text>
         <Text style={styles.stats}>
-          {stats.size} · {stats.fps} fps · seg {stats.segMs} ms · {stats.delegate}
+          {stats.fps ? `${stats.fps} fps` : "—"}
+          {stats.delegate ? ` · ${stats.delegate}` : ""}
         </Text>
       </View>
 
@@ -409,13 +467,17 @@ export function AuraLabScreen({ navigation }: Props) {
         ) : null}
         {loadState === "ready" && !hasVideo && phase === "live" ? (
           <View style={styles.overlay}>
-            {phoneStatus === "connecting" ? <ActivityIndicator color={COLORS.accentMuted} /> : null}
+            {phoneStatus === "connecting" ? (
+              <ActivityIndicator color={COLORS.accentMuted} />
+            ) : null}
             <Text style={styles.overlayTitle}>
               {source === "phone" ? "Phone camera" : "Webcam"}
             </Text>
             <Text style={styles.overlayText}>
               {sourceError ||
-                (source === "phone" ? PHONE_STATUS_TEXT[phoneStatus] : "Opening webcam…")}
+                (source === "phone"
+                  ? PHONE_STATUS_TEXT[phoneStatus]
+                  : "Opening webcam…")}
             </Text>
           </View>
         ) : null}
@@ -452,7 +514,7 @@ export function AuraLabScreen({ navigation }: Props) {
             />
           ))}
           <View style={styles.modeGroup}>
-            {(["outer", "inner"] as const).map((m) => (
+            {(["both", "outer", "inner"] as const).map((m) => (
               <Pressable
                 key={m}
                 accessibilityRole="button"
@@ -463,7 +525,9 @@ export function AuraLabScreen({ navigation }: Props) {
                 }}
                 style={[styles.chip, mode === m && styles.chipActive]}
               >
-                <Text style={styles.chipText}>{m === "outer" ? "Outer" : "Inner"}</Text>
+                <Text style={styles.chipText}>
+                  {m === "both" ? "Both" : m === "outer" ? "Outer" : "Inner"}
+                </Text>
               </Pressable>
             ))}
           </View>
@@ -488,8 +552,11 @@ export function AuraLabScreen({ navigation }: Props) {
                 style={[
                   styles.linkDot,
                   {
-                    backgroundColor:
-                      hasVideo ? "#4ADE80" : phoneStatus === "error" ? "#F87171" : "#FBBF24",
+                    backgroundColor: hasVideo
+                      ? "#4ADE80"
+                      : phoneStatus === "error"
+                        ? "#F87171"
+                        : "#FBBF24",
                   },
                 ]}
               />
@@ -544,25 +611,32 @@ const styles = StyleSheet.create({
   topBar: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     marginBottom: 14,
+    gap: 8,
   },
   backButton: { width: 44, height: 44, justifyContent: "center" },
-  title: { color: COLORS.text, fontSize: 20, fontWeight: "800", letterSpacing: -0.4 },
+  title: {
+    flex: 1,
+    color: COLORS.text,
+    fontSize: 22,
+    fontWeight: "900",
+    letterSpacing: -0.5,
+  },
   stats: {
     color: COLORS.textMuted,
     fontSize: 12,
     fontWeight: "700",
-    minWidth: 260,
+    minWidth: 88,
     textAlign: "right",
   },
   stage: {
     flex: 1,
-    borderRadius: 26,
+    borderRadius: 22,
     overflow: "hidden",
     backgroundColor: "#000",
-    borderWidth: 2,
+    borderWidth: 1,
     borderColor: COLORS.border,
+    marginBottom: 14,
   },
   overlay: {
     position: "absolute",
@@ -591,12 +665,12 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(15,17,26,0.7)",
   },
   badgeText: { color: COLORS.text, fontSize: 13, fontWeight: "800" },
-  controls: { marginTop: 14, gap: 12 },
-  row: { flexDirection: "row", alignItems: "center", gap: 10 },
+  controls: { gap: 10 },
+  row: { flexDirection: "row", alignItems: "center", gap: 10, flexWrap: "wrap" },
   swatch: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     borderWidth: 2,
     borderColor: "transparent",
   },

@@ -17,13 +17,19 @@
         font-family: -apple-system, system-ui, sans-serif;
         overflow: hidden;
       }
-      video {
+      #preview,
+      #stage {
         position: fixed;
         inset: 0;
         width: 100%;
         height: 100%;
         object-fit: cover;
         background: #000;
+      }
+      #preview {
+        /* Camera element is only a frame source; the canvas is what we show. */
+        opacity: 0;
+        pointer-events: none;
       }
       #status {
         position: fixed;
@@ -55,6 +61,7 @@
   </head>
   <body>
     <video id="preview" playsinline autoplay muted></video>
+    <canvas id="stage" aria-hidden="true"></canvas>
     <button id="start" type="button">Start camera</button>
     <div id="status" role="status" aria-live="polite">Starting…</div>
 
@@ -65,6 +72,13 @@
        * messages are relayed by the React Native app via postMessage
        * (page → app) and window.auraOnSignal (app → page).
        * See src/services/remoteSignaling.ts for the protocol.
+       *
+       * Orientation: mobile browsers often tag rotation in the
+       * urn:3gpp:video-orientation RTP extension instead of rotating pixels.
+       * Aura Lab uploads frames with WebGL texImage2D, which frequently
+       * ignores that metadata — so the laptop looks sideways. We (1) strip
+       * the extension from the offer and (2) re-draw upright into a canvas
+       * and send canvas.captureStream() so the bitstream itself is upright.
        */
       const config = window.AURA_CONFIG || {
         iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
@@ -72,15 +86,79 @@
       const MAX_BITRATE = 2500000;
 
       const video = document.getElementById("preview");
+      const stage = document.getElementById("stage");
+      const stageCtx = stage.getContext("2d", { alpha: false });
       const statusEl = document.getElementById("status");
       const startButton = document.getElementById("start");
 
+      let cameraStream = null;
       let stream = null;
       let pc = null;
       let offerId = null;
       let laptopSession = null;
       let pendingIce = [];
       let retryTimer = null;
+      let paintId = 0;
+
+      /** Drop video-orientation so the encoder rotates pixels instead of tagging. */
+      function withoutVideoOrientation(sdp) {
+        if (!sdp) return sdp;
+        return sdp.replace(/^a=extmap:[^\r\n]*urn:3gpp:video-orientation[^\r\n]*\r?\n/gm, "");
+      }
+
+      function devicePortrait() {
+        return window.innerHeight >= window.innerWidth;
+      }
+
+      /**
+       * 90° clockwise turns needed so a landscape sensor frame looks upright
+       * on the current device orientation (rear camera).
+       */
+      function uprightTurns(frameW, frameH) {
+        const frameLandscape = frameW >= frameH;
+        const screenLandscape = !devicePortrait();
+        if (frameLandscape === screenLandscape) return 0;
+        const angle =
+          (screen.orientation && typeof screen.orientation.angle === "number"
+            ? screen.orientation.angle
+            : typeof window.orientation === "number"
+              ? window.orientation
+              : 0) || 0;
+        // Portrait: usually 90° CW; upside-down portrait: 90° CCW.
+        if (!screenLandscape) return angle === 180 ? 3 : 1;
+        // Landscape with a portrait-coded frame.
+        return angle === 270 || angle === -90 ? 3 : 1;
+      }
+
+      function paintFrame() {
+        const vw = video.videoWidth;
+        const vh = video.videoHeight;
+        if (!vw || !vh || !stageCtx) {
+          paintId = requestAnimationFrame(paintFrame);
+          return;
+        }
+        const turns = uprightTurns(vw, vh) % 4;
+        const outW = turns % 2 === 1 ? vh : vw;
+        const outH = turns % 2 === 1 ? vw : vh;
+        if (stage.width !== outW || stage.height !== outH) {
+          stage.width = outW;
+          stage.height = outH;
+        }
+        stageCtx.save();
+        if (turns === 1) {
+          stageCtx.translate(outW, 0);
+          stageCtx.rotate(Math.PI / 2);
+        } else if (turns === 2) {
+          stageCtx.translate(outW, outH);
+          stageCtx.rotate(Math.PI);
+        } else if (turns === 3) {
+          stageCtx.translate(0, outH);
+          stageCtx.rotate(-Math.PI / 2);
+        }
+        stageCtx.drawImage(video, 0, 0, vw, vh);
+        stageCtx.restore();
+        paintId = requestAnimationFrame(paintFrame);
+      }
 
       function post(type, payload) {
         if (window.ReactNativeWebView) {
@@ -165,8 +243,9 @@
 
         setLinkState("connecting", "Connecting to laptop…");
         const offer = await peer.createOffer();
-        await peer.setLocalDescription(offer);
-        sendSignal("offer", { offerId: id, sdp: offer.sdp });
+        const sdp = withoutVideoOrientation(offer.sdp);
+        await peer.setLocalDescription({ type: "offer", sdp });
+        sendSignal("offer", { offerId: id, sdp });
         await tuneSender(peer);
       }
 
@@ -233,19 +312,39 @@
           return;
         }
         try {
-          stream = await navigator.mediaDevices.getUserMedia({
+          cameraStream = await navigator.mediaDevices.getUserMedia({
             video: {
               facingMode: { ideal: "environment" },
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
+              // Prefer portrait; many phones still deliver landscape sensor
+              // buffers — paintFrame() corrects that before streaming.
+              width: { ideal: 720 },
+              height: { ideal: 1280 },
               frameRate: { ideal: 30 },
             },
             audio: false,
           });
-          const track = stream.getVideoTracks()[0];
-          if ("contentHint" in track) track.contentHint = "motion";
-          video.srcObject = stream;
+          const camTrack = cameraStream.getVideoTracks()[0];
+          if ("contentHint" in camTrack) camTrack.contentHint = "motion";
+          video.srcObject = cameraStream;
           await video.play().catch(() => {});
+          if (!video.videoWidth) {
+            await new Promise((resolve) => {
+              video.addEventListener("loadeddata", resolve, { once: true });
+            });
+          }
+
+          cancelAnimationFrame(paintId);
+          paintFrame();
+
+          // Bake orientation into pixels so the laptop WebGL path stays upright.
+          if (typeof stage.captureStream === "function") {
+            stream = stage.captureStream(30);
+            const outTrack = stream.getVideoTracks()[0];
+            if (outTrack && "contentHint" in outTrack) outTrack.contentHint = "motion";
+          } else {
+            stream = cameraStream;
+          }
+
           setLinkState("waiting", "Waiting for laptop… open Aura lab on your laptop.");
           post("page-ready", {});
         } catch (error) {

@@ -10,7 +10,7 @@
  * All heavy work is on the GPU, so the cost barely depends on video size.
  */
 
-export type GlowMode = "outer" | "inner";
+export type GlowMode = "outer" | "inner" | "both";
 
 export type AuraFrameOptions = {
   color: readonly [number, number, number]; // 0-255
@@ -21,9 +21,17 @@ export type AuraFrameOptions = {
 
 export type AuraRenderer = {
   setMask(data: Uint8Array, width: number, height: number): void;
-  render(video: HTMLVideoElement, options: AuraFrameOptions): void;
+  /** Video or an upright canvas (phone streams may need a rotated intermediate). */
+  render(source: HTMLVideoElement | HTMLCanvasElement, options: AuraFrameOptions): void;
   dispose(): void;
 };
+
+function sourceSize(source: HTMLVideoElement | HTMLCanvasElement) {
+  if (source instanceof HTMLVideoElement) {
+    return { w: source.videoWidth, h: source.videoHeight };
+  }
+  return { w: source.width, h: source.height };
+}
 
 const VERT = `#version 300 es
 in vec2 aPos;
@@ -74,39 +82,34 @@ void main() {
     return;
   }
 
-  // Low-res mask. A 4-neighbor max expands the silhouette by ~1 mask px
-  // so the outline sits on the body edge instead of inside it.
-  vec2 texel = 1.0 / vec2(textureSize(uMask, 0));
-  float raw = texture(uMask, uv).r;
-  float dilated = max(
-    max(raw, texture(uMask, uv + vec2(texel.x, 0.0)).r),
-    max(
-      max(texture(uMask, uv - vec2(texel.x, 0.0)).r, texture(uMask, uv + vec2(0.0, texel.y)).r),
-      texture(uMask, uv - vec2(0.0, texel.y)).r
-    )
-  );
-  float m = smoothstep(0.40, 0.56, dilated);
+  // Body edge from the soft blur (not the noisy raw mask), so the glow
+  // follows a smooth silhouette.
   float bw = texture(uWide, uv).r;
   float bn = texture(uNarrow, uv).r;
+  float body = smoothstep(0.38, 0.72, bn);
+  float bodySoft = smoothstep(0.28, 0.78, bw);
 
+  float outerGlow = bw * (1.0 - bodySoft) * 1.35 + bn * (1.0 - body) * 0.55;
+  float innerGlow = ((1.0 - bw) * 0.45 + (1.0 - bn) * 0.85) * body;
   float glow;
+  float rim = 0.0;
   if (uMode == 0) {
-    // Soft bloom outside, tighter near-edge fill from the narrow blur.
-    glow = (bw * 0.7 + bn * 1.05) * (1.0 - m);
+    glow = outerGlow;
+    rim = pow(max(bn * (1.0 - body), 0.0), 1.4) * 0.7;
+  } else if (uMode == 1) {
+    glow = innerGlow;
   } else {
-    glow = ((1.0 - bw) * 0.55 + (1.0 - bn) * 0.95) * m;
+    // Aura: soft outer halo + light inner wash (not a thin outline shell).
+    glow = outerGlow * 1.05 + innerGlow * 0.45;
+    rim = pow(max(bn * (1.0 - body), 0.0), 1.5) * 0.4;
   }
 
-  // Rim from the narrow blur ring (not the soft confidence band) so it
-  // follows the silhouette cleanly instead of looking blotchy.
-  float rim = smoothstep(0.12, 0.48, bn) * (1.0 - m);
-  rim *= rim; // concentrate into a thin bright edge
-  float pulse = 0.85 + 0.15 * sin(uTime * 2.8);
-  float flow = 0.82 + 0.18 * sin(uv.y * 16.0 - uTime * 3.0 + uv.x * 5.0);
+  float pulse = 0.82 + 0.18 * sin(uTime * 2.2);
+  float flow = 0.86 + 0.14 * sin(uv.y * 7.0 - uTime * 2.6 + uv.x * 3.0);
 
   vec3 col = base
     + uColor * glow * pulse * flow * uStrength
-    + mix(uColor, vec3(1.0), 0.55) * rim * 0.85 * uStrength;
+    + mix(uColor, vec3(1.0), 0.5) * rim * 0.5 * uStrength;
   outColor = vec4(col, 1.0);
 }`;
 
@@ -237,9 +240,8 @@ export function createAuraRenderer(canvas: HTMLCanvasElement): AuraRenderer {
       }
     },
 
-    render(video, options) {
-      const w = video.videoWidth;
-      const h = video.videoHeight;
+    render(source, options) {
+      const { w, h } = sourceSize(source);
       if (!w || !h) return;
       if (canvas.width !== w || canvas.height !== h) {
         canvas.width = w;
@@ -249,14 +251,14 @@ export function createAuraRenderer(canvas: HTMLCanvasElement): AuraRenderer {
       gl.bindVertexArray(vao);
       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
       gl.bindTexture(gl.TEXTURE_2D, videoTex);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
 
       const hasMask = maskW > 0 && targets.length === 4;
       if (hasMask) {
         gl.useProgram(blurProgram);
-        // Same 4 blur passes; slightly larger narrow radius for a cleaner rim.
-        const wide = 3.2;
-        const narrow = 1.25;
+        // Wide bloom for the halo; narrow for a soft edge wash.
+        const wide = 4.2;
+        const narrow = 1.35;
         blurPass(maskTex, targets[0], wide / maskW, 0);
         blurPass(targets[0].tex, targets[1], 0, wide / maskH);
         blurPass(maskTex, targets[2], narrow / maskW, 0);
@@ -279,7 +281,10 @@ export function createAuraRenderer(canvas: HTMLCanvasElement): AuraRenderer {
       gl.uniform3f(u.color, r / 255, g / 255, b / 255);
       gl.uniform1f(u.time, options.timeSeconds);
       gl.uniform1f(u.strength, options.strength);
-      gl.uniform1i(u.mode, options.mode === "outer" ? 0 : 1);
+      gl.uniform1i(
+        u.mode,
+        options.mode === "outer" ? 0 : options.mode === "inner" ? 1 : 2,
+      );
       gl.uniform1f(u.hasMask, hasMask ? 1 : 0);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
     },

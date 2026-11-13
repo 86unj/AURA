@@ -81,15 +81,25 @@ export function startPhoneReceiver(userId: string, { onStream, onStatus }: Callb
           else if (state === "disconnected" || state === "closed") onStatus("waiting");
         };
 
-        await peer.setRemoteDescription({ type: "offer", sdp: message.data.sdp });
+        // Strip orientation extension so negotiation can't re-enable metadata
+        // rotation (Aura Lab's WebGL upload ignores it and looks sideways).
+        const remoteSdp = String(message.data.sdp || "").replace(
+          /^a=extmap:[^\r\n]*urn:3gpp:video-orientation[^\r\n]*\r?\n/gm,
+          "",
+        );
+        await peer.setRemoteDescription({ type: "offer", sdp: remoteSdp });
         const early = pendingIce.filter((item) => item.offerId === thisOffer);
         pendingIce = [];
         for (const item of early) {
           await peer.addIceCandidate(item.candidate).catch(() => {});
         }
         const answer = await peer.createAnswer();
-        await peer.setLocalDescription(answer);
-        channel.send("answer", { offerId: thisOffer, sdp: answer.sdp });
+        const answerSdp = String(answer.sdp || "").replace(
+          /^a=extmap:[^\r\n]*urn:3gpp:video-orientation[^\r\n]*\r?\n/gm,
+          "",
+        );
+        await peer.setLocalDescription({ type: "answer", sdp: answerSdp });
+        channel.send("answer", { offerId: thisOffer, sdp: answerSdp });
         break;
       }
 
