@@ -224,6 +224,8 @@
        * the extension from the offer and (2) re-draw upright into a canvas
        * and send canvas.captureStream() so the bitstream itself is upright.
        *
+       * Device angle comes from the React Native host (expo-screen-orientation
+       * via window.__auraDeviceAngle), with screen/deviceorientation fallbacks.
        * Capture UI lives here; Aura Lab still freezes/analyzes the frame.
        */
       const config = window.AURA_CONFIG || {
@@ -264,29 +266,98 @@
         return sdp.replace(/^a=extmap:[^\r\n]*urn:3gpp:video-orientation[^\r\n]*\r?\n/gm, "");
       }
 
-      function devicePortrait() {
-        return window.innerHeight >= window.innerWidth;
+      /** Degrees clockwise from portrait-up: 0 | 90 | 180 | 270. */
+      let deviceAngle = 0;
+      let deviceAngleFromHost = false;
+
+      function normalizeAngle(value) {
+        const n = ((Number(value) % 360) + 360) % 360;
+        if (n >= 45 && n < 135) return 90;
+        if (n >= 135 && n < 225) return 180;
+        if (n >= 225 && n < 315) return 270;
+        return 0;
+      }
+
+      function readBrowserAngle() {
+        if (screen.orientation && typeof screen.orientation.angle === "number") {
+          return normalizeAngle(screen.orientation.angle);
+        }
+        if (typeof window.orientation === "number") {
+          return normalizeAngle(window.orientation);
+        }
+        return window.innerWidth > window.innerHeight ? 90 : 0;
+      }
+
+      function syncDeviceAngle() {
+        if (typeof window.__auraDeviceAngle === "number") {
+          deviceAngle = normalizeAngle(window.__auraDeviceAngle);
+          deviceAngleFromHost = true;
+          return deviceAngle;
+        }
+        if (!deviceAngleFromHost) {
+          deviceAngle = readBrowserAngle();
+        }
+        return deviceAngle;
       }
 
       /**
-       * 90° clockwise turns needed so a landscape sensor frame looks upright
-       * on the current device orientation (rear camera).
+       * 90° clockwise turns so the outgoing canvas matches gravity
+       * (subject upright on the laptop / in the analyze API image).
        */
       function uprightTurns(frameW, frameH) {
+        const angle = syncDeviceAngle();
+        const wantLandscape = angle === 90 || angle === 270;
         const frameLandscape = frameW >= frameH;
-        const screenLandscape = !devicePortrait();
-        if (frameLandscape === screenLandscape) return 0;
-        const angle =
-          (screen.orientation && typeof screen.orientation.angle === "number"
-            ? screen.orientation.angle
-            : typeof window.orientation === "number"
-              ? window.orientation
-              : 0) || 0;
-        // Portrait: usually 90° CW; upside-down portrait: 90° CCW.
-        if (!screenLandscape) return angle === 180 ? 3 : 1;
-        // Landscape with a portrait-coded frame.
-        return angle === 270 || angle === -90 ? 3 : 1;
+
+        if (frameLandscape === wantLandscape) {
+          // Aspects already match; flip 180° when the device is upside-down
+          // or the wrong landscape direction relative to a landscape buffer.
+          if (angle === 180) return 2;
+          if (angle === 270 && frameLandscape) return 2;
+          return 0;
+        }
+
+        // Aspects disagree — rotate a quarter turn toward the device angle.
+        if (!wantLandscape) {
+          // Portrait device, landscape sensor buffer (most common).
+          return angle === 180 ? 3 : 1;
+        }
+        // Landscape device, portrait-coded buffer.
+        return angle === 270 ? 3 : 1;
       }
+
+      function onHostAngleMaybeChanged() {
+        // Poll lightly; RN injects __auraDeviceAngle on orientation changes.
+        syncDeviceAngle();
+      }
+
+      if (screen.orientation && typeof screen.orientation.addEventListener === "function") {
+        screen.orientation.addEventListener("change", () => {
+          if (!deviceAngleFromHost) deviceAngle = readBrowserAngle();
+        });
+      }
+      window.addEventListener("orientationchange", () => {
+        if (!deviceAngleFromHost) deviceAngle = readBrowserAngle();
+      });
+      window.addEventListener("resize", onHostAngleMaybeChanged);
+      // deviceorientation covers portrait-locked WebViews where screen.angle stays 0.
+      window.addEventListener("deviceorientation", (event) => {
+        if (deviceAngleFromHost) return;
+        const beta = event.beta;
+        const gamma = event.gamma;
+        if (beta == null || gamma == null) return;
+        const absBeta = Math.abs(beta);
+        const absGamma = Math.abs(gamma);
+        if (absGamma > 45 && absGamma > absBeta) {
+          deviceAngle = gamma > 0 ? 90 : 270;
+        } else if (beta < -45 || beta > 135) {
+          deviceAngle = 180;
+        } else if (absBeta > 45) {
+          deviceAngle = 0;
+        }
+      });
+      setInterval(onHostAngleMaybeChanged, 500);
+      syncDeviceAngle();
 
       function paintFrame() {
         const vw = video.videoWidth;

@@ -3,8 +3,9 @@
  *
  * Phone and laptop are signed in as the same user and meet on
  * `remote:<user.id>`, so no pairing code is needed. Broadcast messages are
- * not stored; the channel only carries the handshake (offer/answer/ICE).
- * Video itself flows peer-to-peer over WebRTC.
+ * not stored; the channel only carries the handshake (offer/answer/ICE)
+ * plus lightweight capture controls. Video itself flows peer-to-peer over
+ * WebRTC.
  *
  * Protocol (event "signal", payload = SignalMessage):
  *   laptop → "laptop-ready" { sessionId }   laptop is listening
@@ -13,14 +14,28 @@
  *   laptop → "answer" { offerId, sdp }
  *   both   → "ice"    { offerId, candidate }
  *   both   → "bye"                          leaving
+ *   phone  → "control" { action }           shutter / analyze / retake on laptop
+ *   laptop → "phase"   { phase }            sync Aura Lab capture phase to phone UI
  */
 import { supabase } from "./supabaseClient";
 
 export type RemoteRole = "phone" | "laptop";
 
+export type RemoteControlAction = "capture" | "analyze" | "retake";
+
+export type RemotePhase = "live" | "frozen" | "analyzing";
+
 export type SignalMessage = {
   from: RemoteRole;
-  kind: "laptop-ready" | "phone-hello" | "offer" | "answer" | "ice" | "bye";
+  kind:
+    | "laptop-ready"
+    | "phone-hello"
+    | "offer"
+    | "answer"
+    | "ice"
+    | "bye"
+    | "control"
+    | "phase";
   data?: any;
 };
 

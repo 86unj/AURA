@@ -26,6 +26,12 @@
           "color": "#C4B5FD"
         }
       ],
+      [
+        "expo-screen-orientation",
+        {
+          "initialOrientation": "PORTRAIT_UP"
+        }
+      ],
       "expo-font",
       "expo-audio",
       "expo-sharing",

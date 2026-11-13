@@ -1,8 +1,10 @@
-import { ComponentRef, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ComponentRef, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useCameraPermissions } from "expo-camera";
+import * as ScreenOrientation from "expo-screen-orientation";
 import { WebView, WebViewMessageEvent } from "react-native-webview";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -15,6 +17,21 @@ import {
   SignalingChannel,
   SignalMessage,
 } from "../services/remoteSignaling";
+
+/** Map expo orientation enum → degrees clockwise from portrait-up. */
+function orientationToAngle(orientation: ScreenOrientation.Orientation): number {
+  switch (orientation) {
+    case ScreenOrientation.Orientation.LANDSCAPE_LEFT:
+      return 90;
+    case ScreenOrientation.Orientation.PORTRAIT_DOWN:
+      return 180;
+    case ScreenOrientation.Orientation.LANDSCAPE_RIGHT:
+      return 270;
+    case ScreenOrientation.Orientation.PORTRAIT_UP:
+    default:
+      return 0;
+  }
+}
 
 type Props = NativeStackScreenProps<RootStackParamList, "RemoteCamera">;
 
@@ -62,6 +79,41 @@ export function RemoteCameraScreen({ navigation }: Props) {
     [],
   );
 
+  const injectDeviceAngle = useCallback((angle: number) => {
+    const script = `window.__auraDeviceAngle = ${angle}; true;`;
+    webviewRef.current?.injectJavaScript(script);
+  }, []);
+
+  // Allow the phone to rotate while remoting; lock portrait again on leave.
+  // Also push the physical/screen angle into the WebView so phone-camera.html
+  // can bake upright pixels even when the browser orientation APIs are weak.
+  useFocusEffect(
+    useCallback(() => {
+      let subscription: ScreenOrientation.Subscription | null = null;
+      let active = true;
+
+      (async () => {
+        try {
+          await ScreenOrientation.unlockAsync();
+          const current = await ScreenOrientation.getOrientationAsync();
+          if (active) injectDeviceAngle(orientationToAngle(current));
+        } catch {
+          // Expo Go / web stubs may not support unlock; page still has fallbacks.
+        }
+        if (!active) return;
+        subscription = ScreenOrientation.addOrientationChangeListener((event) => {
+          injectDeviceAngle(orientationToAngle(event.orientationInfo.orientation));
+        });
+      })();
+
+      return () => {
+        active = false;
+        subscription?.remove();
+        ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+      };
+    }, [injectDeviceAngle]),
+  );
+
   // Relay signaling between the Supabase channel and the page.
   useEffect(() => {
     if (!user) return;
@@ -89,6 +141,10 @@ export function RemoteCameraScreen({ navigation }: Props) {
     switch (data.type) {
       case "page-ready":
         setErrorText(null);
+        // Page just loaded — push the latest angle before streaming starts.
+        ScreenOrientation.getOrientationAsync()
+          .then((orientation) => injectDeviceAngle(orientationToAngle(orientation)))
+          .catch(() => {});
         channelRef.current?.send("phone-hello");
         break;
       case "signal":

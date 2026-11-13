@@ -72,9 +72,6 @@ export function AuraLabScreen({ navigation }: Props) {
   const frozenFrame = useRef<string | null>(null);
   const analyzeToken = useRef(0);
   const sourceRef = useRef<VideoSource>("phone");
-  // Phone cameras often send landscape sensor buffers; draw upright here so
-  // WebGL/segmentation match what you see on the phone (and capture stays upright).
-  const uprightCanvas = useRef<HTMLCanvasElement | null>(null);
 
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [errorText, setErrorText] = useState("");
@@ -87,6 +84,15 @@ export function AuraLabScreen({ navigation }: Props) {
   const [hasVideo, setHasVideo] = useState(false);
   const [phoneStatus, setPhoneStatus] = useState<ReceiverStatus>("waiting");
   const [sourceError, setSourceError] = useState("");
+  const receiverRef = useRef<PhoneReceiver | null>(null);
+  // Always call the latest capture handlers from the phone control channel.
+  const actionsRef = useRef({
+    capture: () => {},
+    analyze: async () => {},
+    retake: () => {},
+  });
+  // Capture/analyze live on the phone when Phone source is selected.
+  const phoneOwnsControls = source === "phone";
   sourceRef.current = source;
 
   useEffect(() => {
@@ -105,9 +111,6 @@ export function AuraLabScreen({ navigation }: Props) {
     // makes MediaPipe return a full-size mask, which is what made it slow.
     const segCanvas = document.createElement("canvas");
     const segCtx = segCanvas.getContext("2d", { willReadFrequently: false });
-    const upright = document.createElement("canvas");
-    uprightCanvas.current = upright;
-    const uprightCtx = upright.getContext("2d", { alpha: false });
 
     let smooth: Float32Array | null = null;
     let maskBytes: Uint8Array | null = null;
@@ -135,25 +138,6 @@ export function AuraLabScreen({ navigation }: Props) {
       renderer.setMask(out, mask.width, mask.height);
     }
 
-    /** When the phone sends a landscape buffer while held upright, rotate 90° CW. */
-    function uprightFrame(
-      vw: number,
-      vh: number,
-    ): { source: HTMLVideoElement | HTMLCanvasElement; w: number; h: number } {
-      const needsRotate = sourceRef.current === "phone" && vw > vh;
-      if (!needsRotate || !uprightCtx) return { source: video!, w: vw, h: vh };
-      if (upright.width !== vh || upright.height !== vw) {
-        upright.width = vh;
-        upright.height = vw;
-      }
-      uprightCtx.save();
-      uprightCtx.translate(vh, 0);
-      uprightCtx.rotate(Math.PI / 2);
-      uprightCtx.drawImage(video!, 0, 0, vw, vh);
-      uprightCtx.restore();
-      return { source: upright, w: vh, h: vw };
-    }
-
     function renderFrame() {
       if (cancelled || !segmenter || !renderer || !segCtx) return;
       if (settings.current.frozen || video!.readyState < 2) return;
@@ -161,7 +145,9 @@ export function AuraLabScreen({ navigation }: Props) {
       const vh = video!.videoHeight;
       if (!vw || !vh) return;
 
-      const { source: frame, w, h } = uprightFrame(vw, vh);
+      // Phone already bakes gravity-upright pixels in phone-camera.html.
+      const w = vw;
+      const h = vh;
 
       // Scale the long side to SEG_SIZE (works for landscape and portrait phones).
       const scale = SEG_SIZE / Math.max(w, h);
@@ -173,14 +159,14 @@ export function AuraLabScreen({ navigation }: Props) {
       }
 
       const t0 = performance.now();
-      segCtx.drawImage(frame, 0, 0, segW, segH);
+      segCtx.drawImage(video!, 0, 0, segW, segH);
       segmenter.segmentForVideo(segCanvas, t0, (result) => {
         onMasks(result.confidenceMasks);
       });
       const t1 = performance.now();
 
       const { mode: glowMode, colorIndex: ci } = settings.current;
-      renderer.render(frame, {
+      renderer.render(video!, {
         color: AURA_COLORS[ci].rgb,
         mode: glowMode,
         timeSeconds: t1 / 1000,
@@ -337,11 +323,19 @@ export function AuraLabScreen({ navigation }: Props) {
           setPhoneStatus(status);
           setSourceError(status === "error" ? detail ?? "Connection error." : "");
         },
+        onControl: (action) => {
+          if (cancelled) return;
+          if (action === "capture") actionsRef.current.capture();
+          else if (action === "analyze") void actionsRef.current.analyze();
+          else if (action === "retake") actionsRef.current.retake();
+        },
       });
+      receiverRef.current = receiver;
     }
 
     return () => {
       cancelled = true;
+      receiverRef.current = null;
       webcam?.getTracks().forEach((track) => track.stop());
       receiver?.stop().catch(() => {});
       video.srcObject = null;
@@ -349,56 +343,60 @@ export function AuraLabScreen({ navigation }: Props) {
     };
   }, [source, user]);
 
+  // Keep the phone shutter UI in sync with Aura Lab's capture phase.
+  useEffect(() => {
+    if (source !== "phone") return;
+    receiverRef.current?.sendPhase(phase);
+  }, [phase, source, hasVideo, phoneStatus]);
+
   function captureRawFrame(): string | null {
     const video = videoRef.current;
     if (!video || !video.videoWidth) return null;
     const vw = video.videoWidth;
     const vh = video.videoHeight;
-    const rotate = sourceRef.current === "phone" && vw > vh;
-    const srcW = rotate ? vh : vw;
-    const srcH = rotate ? vw : vh;
+    // Stream from the phone is already gravity-upright; send that to the API.
     const out = document.createElement("canvas");
     out.width = CAPTURE_WIDTH;
-    out.height = Math.round((srcH * CAPTURE_WIDTH) / srcW);
+    out.height = Math.round((vh * CAPTURE_WIDTH) / vw);
     const ctx = out.getContext("2d");
     if (!ctx) return null;
-    if (rotate) {
-      // Same 90° CW upright as the live preview.
-      const tmp = uprightCanvas.current ?? document.createElement("canvas");
-      if (tmp.width !== vh || tmp.height !== vw) {
-        tmp.width = vh;
-        tmp.height = vw;
-      }
-      const tctx = tmp.getContext("2d");
-      if (!tctx) return null;
-      tctx.save();
-      tctx.translate(vh, 0);
-      tctx.rotate(Math.PI / 2);
-      tctx.drawImage(video, 0, 0, vw, vh);
-      tctx.restore();
-      ctx.drawImage(tmp, 0, 0, out.width, out.height);
-    } else {
-      ctx.drawImage(video, 0, 0, out.width, out.height);
-    }
+    ctx.drawImage(video, 0, 0, out.width, out.height);
     // Raw camera frame (no aura overlay) is what goes to the AI.
     return out.toDataURL("image/jpeg", 0.78).split(",")[1] ?? null;
   }
 
+  function syncPhonePhase(next: Phase) {
+    if (sourceRef.current === "phone") {
+      receiverRef.current?.sendPhase(next);
+    }
+  }
+
   /** Step 1: freeze the screen. Nothing is sent yet. */
   function handleCapture() {
-    if (phase !== "live" || !ready) return;
+    if (phase !== "live" || !ready) {
+      syncPhonePhase(phase === "live" ? "live" : phase);
+      return;
+    }
     const base64 = captureRawFrame();
-    if (!base64) return;
+    if (!base64) {
+      syncPhonePhase("live");
+      return;
+    }
     frozenFrame.current = base64;
     settings.current.frozen = true;
     setPhase("frozen");
+    syncPhonePhase("frozen");
   }
 
   /** Step 2: user confirmed the frozen frame, send it. */
   async function handleAnalyze() {
     const base64 = frozenFrame.current;
-    if (phase !== "frozen" || !base64) return;
+    if (phase !== "frozen" || !base64) {
+      syncPhonePhase(phase);
+      return;
+    }
     setPhase("analyzing");
+    syncPhonePhase("analyzing");
     const token = ++analyzeToken.current;
     const report = await analyzeAura(base64);
     if (token !== analyzeToken.current) return; // Retake pressed meanwhile.
@@ -411,7 +409,14 @@ export function AuraLabScreen({ navigation }: Props) {
     frozenFrame.current = null;
     settings.current.frozen = false;
     setPhase("live");
+    syncPhonePhase("live");
   }
+
+  actionsRef.current = {
+    capture: handleCapture,
+    analyze: handleAnalyze,
+    retake: handleRetake,
+  };
 
   const canvasStyle: CSSProperties = {
     width: "100%",
@@ -565,36 +570,40 @@ export function AuraLabScreen({ navigation }: Props) {
           ) : null}
         </View>
 
-        <View style={styles.row}>
-          {phase === "live" ? (
-            <Pressable
-              style={[styles.primaryButton, !ready && styles.disabled]}
-              onPress={handleCapture}
-              disabled={!ready}
-              accessibilityRole="button"
-            >
-              <Text style={styles.primaryText}>Capture</Text>
-            </Pressable>
-          ) : (
-            <>
+        {phoneOwnsControls ? (
+          <></>
+        ) : (
+          <View style={styles.row}>
+            {phase === "live" ? (
               <Pressable
-                style={styles.secondaryButton}
-                onPress={handleRetake}
+                style={[styles.primaryButton, !ready && styles.disabled]}
+                onPress={handleCapture}
+                disabled={!ready}
                 accessibilityRole="button"
               >
-                <Text style={styles.secondaryText}>Retake</Text>
+                <Text style={styles.primaryText}>Capture</Text>
               </Pressable>
-              <Pressable
-                style={[styles.primaryButton, phase === "analyzing" && styles.disabled]}
-                onPress={handleAnalyze}
-                disabled={phase === "analyzing"}
-                accessibilityRole="button"
-              >
-                <Text style={styles.primaryText}>Analyze aura</Text>
-              </Pressable>
-            </>
-          )}
-        </View>
+            ) : (
+              <>
+                <Pressable
+                  style={styles.secondaryButton}
+                  onPress={handleRetake}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.secondaryText}>Retake</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.primaryButton, phase === "analyzing" && styles.disabled]}
+                  onPress={handleAnalyze}
+                  disabled={phase === "analyzing"}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.primaryText}>Analyze aura</Text>
+                </Pressable>
+              </>
+            )}
+          </View>
+        )}
       </View>
     </SafeAreaView>
   );
@@ -708,5 +717,12 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.surfaceRaised,
   },
   secondaryText: { color: COLORS.text, fontSize: 15, fontWeight: "800" },
+  phoneHint: {
+    color: COLORS.textMuted,
+    fontSize: 13,
+    fontWeight: "600",
+    textAlign: "center",
+    paddingVertical: 14,
+  },
   disabled: { opacity: 0.6 },
 });
