@@ -223,8 +223,7 @@
        * Aura Lab uploads frames with WebGL texImage2D, which frequently
        * ignores that metadata — so the laptop looks sideways. We (1) strip
        * the extension from the offer and (2) re-draw the frames into a canvas
-       * (rotated to match the device angle when needed) and send
-       * canvas.captureStream() so the pixels themselves are upright.
+       * and send canvas.captureStream() so the pixels themselves are upright.
        *
        * Capture UI lives here; Aura Lab still freezes/analyzes the frame.
        */
@@ -280,46 +279,24 @@
       }
 
       /**
-       * Quarter turns (clockwise) needed so the frame matches the phone's
-       * orientation. Portrait vs landscape comes from the viewport itself, so
-       * a wrong angle can never rotate a frame that already matches. The
-       * angle only picks the direction when the phone is in landscape.
+       * Frames arrive upright: the browser applies the camera rotation itself,
+       * even when it hands over a landscape-sized buffer on a portrait phone.
+       * Rotating by frame shape or device angle therefore tips the image over,
+       * so we just copy the frame into the canvas.
        */
-      function uprightTurns(frameW, frameH) {
-        const deviceLandscape = window.innerWidth > window.innerHeight;
-        const frameLandscape = frameW >= frameH;
-        if (deviceLandscape === frameLandscape) return 0;
-        if (!deviceLandscape) return 1;
-        return getDeviceAngle() === 270 ? 3 : 1;
-      }
-
       function paintFrame() {
         const vw = video.videoWidth;
         const vh = video.videoHeight;
         if (vw && vh && stageCtx) {
-          const turns = uprightTurns(vw, vh);
-          // TEMP debug readout: remove once rotation is verified.
+          // TEMP debug readout: remove once verified.
           document.getElementById("debug").textContent =
             `video ${vw}x${vh} | view ${window.innerWidth}x${window.innerHeight} | ` +
-            `host ${window.__auraDeviceAngle} scr ${screen.orientation && screen.orientation.angle} | ` +
-            `turns ${turns} | ${facingMode}`;
-          const swap = turns % 2 === 1;
-          const outW = swap ? vh : vw;
-          const outH = swap ? vw : vh;
-          if (stage.width !== outW || stage.height !== outH) {
-            stage.width = outW;
-            stage.height = outH;
-          }
-          stageCtx.save();
-          if (turns === 1) {
-            stageCtx.translate(outW, 0);
-            stageCtx.rotate(Math.PI / 2);
-          } else if (turns === 3) {
-            stageCtx.translate(0, outH);
-            stageCtx.rotate(-Math.PI / 2);
+            `angle ${getDeviceAngle()} | ${facingMode}`;
+          if (stage.width !== vw || stage.height !== vh) {
+            stage.width = vw;
+            stage.height = vh;
           }
           stageCtx.drawImage(video, 0, 0, vw, vh);
-          stageCtx.restore();
         }
         paintId = requestAnimationFrame(paintFrame);
       }
