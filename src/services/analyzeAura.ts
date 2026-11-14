@@ -1,5 +1,6 @@
 import { FALLBACK_REPORTS } from "../data/fallbackAuraReports";
 import { AuraReport } from "../types";
+import { supabase } from "./supabaseClient";
 
 const ANALYZE_TIMEOUT_MS = 30000;
 const DEMO_MODE = false;
@@ -66,25 +67,36 @@ async function fetchWithTimeout(base64: string): Promise<AuraReport> {
     throw new Error("Aura analysis URL is not configured.");
   }
 
+  if (!ANON_KEY) {
+    throw new Error("Supabase anon key is not configured.");
+  }
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    throw new Error("Sign in required to analyze an aura.");
+  }
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), ANALYZE_TIMEOUT_MS);
 
   try {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-
-    if (ANON_KEY) {
-      headers["Authorization"] = `Bearer ${ANON_KEY}`;
-      headers["apikey"] = ANON_KEY;
-    }
-
     const response = await fetch(ANALYZE_URL, {
       method: "POST",
-      headers,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+        apikey: ANON_KEY,
+      },
       body: JSON.stringify({ imageBase64: base64 }),
       signal: controller.signal,
     });
+
+    if (response.status === 401) {
+      throw new Error("Sign in required to analyze an aura.");
+    }
 
     if (!response.ok) {
       throw new Error(`Aura analysis failed with status ${response.status}.`);
@@ -109,4 +121,3 @@ export async function analyzeAura(base64: string): Promise<AuraReport> {
     return pickFallbackReport();
   }
 }
-
