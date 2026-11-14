@@ -189,6 +189,7 @@
     <canvas id="stage" aria-hidden="true"></canvas>
     <button id="start" type="button">Start camera</button>
     <div id="status" role="status" aria-live="polite">Starting…</div>
+    <div id="debug" style="position:fixed;left:8px;top:8px;z-index:9;padding:4px 8px;border-radius:8px;background:rgba(0,0,0,.7);color:#0f0;font:11px monospace;pointer-events:none"></div>
     <div id="analyzingBadge">Reading aura…</div>
     <div id="controls" aria-label="Camera controls">
       <div id="liveDock" class="visible">
@@ -297,6 +298,11 @@
         const vh = video.videoHeight;
         if (vw && vh && stageCtx) {
           const turns = uprightTurns(vw, vh);
+          // TEMP debug readout: remove once rotation is verified.
+          document.getElementById("debug").textContent =
+            `video ${vw}x${vh} | view ${window.innerWidth}x${window.innerHeight} | ` +
+            `host ${window.__auraDeviceAngle} scr ${screen.orientation && screen.orientation.angle} | ` +
+            `turns ${turns} | ${facingMode}`;
           const swap = turns % 2 === 1;
           const outW = swap ? vh : vw;
           const outH = swap ? vw : vh;
