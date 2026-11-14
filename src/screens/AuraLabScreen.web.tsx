@@ -38,9 +38,45 @@ const loadVisionModule = new Function("url", "return import(url)") as (
   url: string,
 ) => Promise<typeof import("@mediapipe/tasks-vision")>;
 
-/** Fixed look for the demo (the lab no longer exposes color / glow options). */
-const AURA_COLOR = [167, 139, 250] as const;
+type AuraRgb = readonly [number, number, number];
+
+/** Starting idle glow; each completed scan picks a new one on return. */
+const DEFAULT_AURA_COLOR: AuraRgb = [167, 139, 250];
 const GLOW_MODE = "both" as const;
+
+/** Saturated mid-lightness RGB so the glow stays vivid on dark video. */
+function randomAuraColor(avoid?: AuraRgb): AuraRgb {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const h = Math.random();
+    const s = 0.65 + Math.random() * 0.3;
+    const l = 0.52 + Math.random() * 0.18;
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    const hue2rgb = (t: number) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1 / 6) return p + (q - p) * 6 * t;
+      if (t < 1 / 2) return q;
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+      return p;
+    };
+    const next: AuraRgb = [
+      Math.round(hue2rgb(h + 1 / 3) * 255),
+      Math.round(hue2rgb(h) * 255),
+      Math.round(hue2rgb(h - 1 / 3) * 255),
+    ];
+    if (
+      !avoid ||
+      Math.abs(next[0] - avoid[0]) +
+        Math.abs(next[1] - avoid[1]) +
+        Math.abs(next[2] - avoid[2]) >
+        120
+    ) {
+      return next;
+    }
+  }
+  return DEFAULT_AURA_COLOR;
+}
 
 /** Long side of the frame fed to the segmenter. The mask comes back at this size. */
 const SEG_SIZE = 640;
@@ -75,6 +111,7 @@ export function AuraLabScreen({ navigation }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const settings = useRef<RenderSettings>({ frozen: false, frozenSource: null, scanning: false });
+  const auraColorRef = useRef<AuraRgb>(DEFAULT_AURA_COLOR);
   const frozenFrame = useRef<string | null>(null);
   const frozenUri = useRef<string | null>(null);
   const analyzeToken = useRef(0);
@@ -165,7 +202,7 @@ export function AuraLabScreen({ navigation }: Props) {
       });
 
       renderer.render(video!, {
-        color: AURA_COLOR,
+        color: auraColorRef.current,
         mode: GLOW_MODE,
         timeSeconds: performance.now() / 1000,
         strength: 1,
@@ -180,7 +217,7 @@ export function AuraLabScreen({ navigation }: Props) {
       if (s.scanning && s.frozenSource && renderer) {
         const t = performance.now() / 1000;
         renderer.render(s.frozenSource, {
-          color: AURA_COLOR,
+          color: auraColorRef.current,
           mode: GLOW_MODE,
           timeSeconds: t,
           strength: 1,
@@ -443,6 +480,10 @@ export function AuraLabScreen({ navigation }: Props) {
   }
 
   function handleRetake() {
+    // Fresh idle glow after a finished scan; mid-flow retakes keep the same color.
+    if (phase === "result") {
+      auraColorRef.current = randomAuraColor(auraColorRef.current);
+    }
     analyzeToken.current += 1;
     frozenFrame.current = null;
     frozenUri.current = null;
@@ -581,7 +622,6 @@ export function AuraLabScreen({ navigation }: Props) {
           ) : null}
         </View>
 
-        {/* TO DO: leaderboard */}
         <View style={[styles.pane, styles.rightPane]}>
           {showResult && result ? (
             <LinearGradient
@@ -668,7 +708,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "rgba(15,17,26,0.6)",
   },
-  hero: { paddingHorizontal: 32, gap: 20 },
+  hero: { paddingHorizontal: 32, gap: 20, flex: 1, justifyContent: "center" },
   heroTitle: {
     color: COLORS.text,
     fontSize: 120,
