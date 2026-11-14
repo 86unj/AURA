@@ -20,7 +20,8 @@
         user-select: none;
         touch-action: manipulation;
       }
-      #preview {
+      #preview,
+      #freeze {
         position: fixed;
         inset: 0;
         width: 100%;
@@ -28,6 +29,12 @@
         object-fit: contain;
         background: #000;
         pointer-events: none;
+      }
+      #freeze {
+        display: none;
+      }
+      #freeze.visible {
+        display: block;
       }
       #status {
         position: fixed;
@@ -181,6 +188,7 @@
   </head>
   <body>
     <video id="preview" playsinline autoplay muted></video>
+    <canvas id="freeze" aria-hidden="true"></canvas>
     <button id="start" type="button">Start camera</button>
     <div id="status" role="status" aria-live="polite">Starting…</div>
     <div id="analyzingBadge">Reading aura…</div>
@@ -214,7 +222,8 @@
        * The camera stream is shown in a <video> and sent to the laptop as is.
        * The browser handles rotation (video element + RTP video-orientation).
        *
-       * Capture UI lives here; Aura Lab still freezes/analyzes the frame.
+       * Capture UI freezes the local preview here; Aura Lab freezes/analyzes
+       * its own copy of the stream on the laptop.
        */
       const config = window.AURA_CONFIG || {
         iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
@@ -222,6 +231,7 @@
       const MAX_BITRATE = 2500000;
 
       const video = document.getElementById("preview");
+      const freezeCanvas = document.getElementById("freeze");
       const statusEl = document.getElementById("status");
       const startButton = document.getElementById("start");
       const controlsEl = document.getElementById("controls");
@@ -244,6 +254,25 @@
       let flipping = false;
       let phase = "live"; // live | frozen | analyzing
       let linkConnected = false;
+      let previewFrozen = false;
+
+      function freezePreview() {
+        if (!video.videoWidth) return;
+        freezeCanvas.width = video.videoWidth;
+        freezeCanvas.height = video.videoHeight;
+        const ctx = freezeCanvas.getContext("2d");
+        if (!ctx) return;
+        ctx.drawImage(video, 0, 0);
+        freezeCanvas.classList.add("visible");
+        video.style.visibility = "hidden";
+        previewFrozen = true;
+      }
+
+      function unfreezePreview() {
+        freezeCanvas.classList.remove("visible");
+        video.style.visibility = "visible";
+        previewFrozen = false;
+      }
 
       function post(type, payload) {
         if (window.ReactNativeWebView) {
@@ -269,6 +298,12 @@
 
       function setPhase(next) {
         phase = next;
+        // Freeze the local preview on shutter; keep streaming to the laptop.
+        if (next === "live") {
+          if (previewFrozen) unfreezePreview();
+        } else if (!previewFrozen) {
+          freezePreview();
+        }
         updateControls();
       }
 
