@@ -18,20 +18,6 @@ import {
   SignalMessage,
 } from "../services/remoteSignaling";
 
-/** Map expo orientation enum → degrees clockwise from portrait-up. */
-function orientationToAngle(orientation: ScreenOrientation.Orientation): number {
-  switch (orientation) {
-    case ScreenOrientation.Orientation.LANDSCAPE_LEFT:
-      return 90;
-    case ScreenOrientation.Orientation.PORTRAIT_DOWN:
-      return 180;
-    case ScreenOrientation.Orientation.LANDSCAPE_RIGHT:
-      return 270;
-    default:
-      return 0;
-  }
-}
-
 type Props = NativeStackScreenProps<RootStackParamList, "RemoteCamera">;
 
 /**
@@ -79,31 +65,14 @@ export function RemoteCameraScreen({ navigation }: Props) {
     [],
   );
 
-  const injectDeviceAngle = useCallback((angle: number) => {
-    webviewRef.current?.injectJavaScript(`window.__auraDeviceAngle = ${angle}; true;`);
-  }, []);
-
-  // Allow the phone to rotate while remoting and keep the page told of the
-  // device angle; lock portrait again on leave.
+  // Allow the phone to rotate while remoting; lock portrait again on leave.
   useFocusEffect(
     useCallback(() => {
-      let subscription: ScreenOrientation.Subscription | null = null;
-      let active = true;
-
-      (async () => {
-        await ScreenOrientation.unlockAsync().catch(() => {});
-        if (!active) return;
-        subscription = ScreenOrientation.addOrientationChangeListener((event) => {
-          injectDeviceAngle(orientationToAngle(event.orientationInfo.orientation));
-        });
-      })();
-
+      ScreenOrientation.unlockAsync().catch(() => {});
       return () => {
-        active = false;
-        subscription?.remove();
         ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
       };
-    }, [injectDeviceAngle]),
+    }, []),
   );
 
   // Relay signaling between the Supabase channel and the page.
@@ -151,10 +120,6 @@ export function RemoteCameraScreen({ navigation }: Props) {
     switch (data.type) {
       case "page-ready":
         setErrorText(null);
-        // Page just loaded: give it the current angle before streaming starts.
-        ScreenOrientation.getOrientationAsync()
-          .then((orientation) => injectDeviceAngle(orientationToAngle(orientation)))
-          .catch(() => {});
         channelRef.current?.send("phone-hello");
         break;
       case "signal":

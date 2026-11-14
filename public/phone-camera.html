@@ -189,10 +189,11 @@
     <canvas id="stage" aria-hidden="true"></canvas>
     <button id="start" type="button">Start camera</button>
     <div id="status" role="status" aria-live="polite">Starting…</div>
-    <div id="debug" style="position:fixed;left:8px;top:8px;z-index:9;padding:4px 8px;border-radius:8px;background:rgba(0,0,0,.7);color:#0f0;font:11px monospace;pointer-events:none"></div>
     <div id="analyzingBadge">Reading aura…</div>
     <div id="controls" aria-label="Camera controls">
       <div id="liveDock" class="visible">
+        <div id="spacer" aria-hidden="true"></div>
+        <button id="shutter" type="button" aria-label="Capture" disabled></button>
         <button id="flip" type="button" aria-label="Flip camera">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M20 9v2a8 8 0 0 1-14.3 4.9" />
@@ -201,8 +202,6 @@
             <path d="M4 19v-4h4" />
           </svg>
         </button>
-        <button id="shutter" type="button" aria-label="Capture" disabled></button>
-        <div id="spacer" aria-hidden="true"></div>
       </div>
       <div id="review">
         <button id="retake" class="btn" type="button">Retake</button>
@@ -265,33 +264,12 @@
         return sdp.replace(/^a=extmap:[^\r\n]*urn:3gpp:video-orientation[^\r\n]*\r?\n/gm, "");
       }
 
-      /**
-       * Device angle, clockwise from portrait-up (0/90/180/270).
-       * The React Native host injects window.__auraDeviceAngle from
-       * expo-screen-orientation; fall back to the browser's own value.
-       */
-      function getDeviceAngle() {
-        if (typeof window.__auraDeviceAngle === "number") return window.__auraDeviceAngle;
-        if (screen.orientation && typeof screen.orientation.angle === "number") {
-          return screen.orientation.angle;
-        }
-        return 0;
-      }
-
-      /**
-       * Frames arrive upright: the browser applies the camera rotation itself,
-       * even when it hands over a landscape-sized buffer on a portrait phone.
-       * Rotating by frame shape or device angle therefore tips the image over,
-       * so we just copy the frame into the canvas.
-       */
+      /** Copy each frame into the canvas that gets streamed. The browser already
+       * delivers upright frames, so no rotation or cropping is applied. */
       function paintFrame() {
         const vw = video.videoWidth;
         const vh = video.videoHeight;
         if (vw && vh && stageCtx) {
-          // TEMP debug readout: remove once verified.
-          document.getElementById("debug").textContent =
-            `video ${vw}x${vh} | view ${window.innerWidth}x${window.innerHeight} | ` +
-            `angle ${getDeviceAngle()} | ${facingMode}`;
           if (stage.width !== vw || stage.height !== vh) {
             stage.width = vw;
             stage.height = vh;
@@ -300,7 +278,6 @@
         }
         paintId = requestAnimationFrame(paintFrame);
       }
-
       function post(type, payload) {
         if (window.ReactNativeWebView) {
           window.ReactNativeWebView.postMessage(JSON.stringify({ type, ...payload }));
