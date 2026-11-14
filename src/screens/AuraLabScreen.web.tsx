@@ -4,19 +4,24 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import type { ImageSegmenter, MPMask } from "@mediapipe/tasks-vision";
 
 import { COLORS } from "../theme/game";
 import { RootStackParamList } from "../navigation/types";
 import { analyzeAura } from "../services/analyzeAura";
-import { AuraRenderer, createAuraRenderer, GlowMode } from "../effects/auraRenderer";
+import { AuraRenderer, createAuraRenderer } from "../effects/auraRenderer";
+import { AuraReportView, hexToRgba } from "../components/AuraReportView";
+import { GameButton } from "../components/GameButton";
 import { useAuth } from "../context/AuthContext";
 import { PhoneReceiver, ReceiverStatus, startPhoneReceiver } from "../services/phoneReceiver";
+import { AuraReport } from "../types";
 
 type Props = NativeStackScreenProps<RootStackParamList, "AuraLab">;
 
@@ -33,12 +38,9 @@ const loadVisionModule = new Function("url", "return import(url)") as (
   url: string,
 ) => Promise<typeof import("@mediapipe/tasks-vision")>;
 
-const AURA_COLORS = [
-  { name: "Violet", rgb: [167, 139, 250] },
-  { name: "Cyan", rgb: [34, 211, 238] },
-  { name: "Pink", rgb: [244, 114, 182] },
-  { name: "Gold", rgb: [250, 204, 21] },
-] as const;
+/** Fixed look for the demo (the lab no longer exposes color / glow options). */
+const AURA_COLOR = [167, 139, 250] as const;
+const GLOW_MODE = "both" as const;
 
 /** Long side of the frame fed to the segmenter. The mask comes back at this size. */
 const SEG_SIZE = 640;
@@ -46,8 +48,12 @@ const SEG_SIZE = 640;
 const SMOOTHING = 0.6;
 /** Width of the photo sent to the AI (same as CameraScreen). */
 const CAPTURE_WIDTH = 640;
+/** Seconds for the scan bar to sweep down and back up. */
+const SCAN_PERIOD = 2.4;
+/** Below this window width the two halves stack vertically. */
+const SPLIT_MIN_WIDTH = 820;
 
-type Phase = "live" | "frozen" | "analyzing";
+type Phase = "live" | "frozen" | "analyzing" | "result";
 type VideoSource = "phone" | "webcam";
 
 const PHONE_STATUS_TEXT: Record<ReceiverStatus, string> = {
@@ -58,32 +64,34 @@ const PHONE_STATUS_TEXT: Record<ReceiverStatus, string> = {
 };
 
 type RenderSettings = {
+  /** Live rendering paused (frozen / analyzing / result). */
   frozen: boolean;
-  mode: GlowMode;
-  colorIndex: number;
+  /** Full-resolution snapshot taken at capture; the scan animation renders this. */
+  frozenSource: HTMLCanvasElement | null;
+  scanning: boolean;
 };
-
-type Stats = { fps: number; segMs: number; size: string; delegate: string };
 
 export function AuraLabScreen({ navigation }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const settings = useRef<RenderSettings>({ frozen: false, mode: "both", colorIndex: 0 });
+  const settings = useRef<RenderSettings>({ frozen: false, frozenSource: null, scanning: false });
   const frozenFrame = useRef<string | null>(null);
+  const frozenUri = useRef<string | null>(null);
   const analyzeToken = useRef(0);
   const sourceRef = useRef<VideoSource>("phone");
+  const { width } = useWindowDimensions();
+  const stacked = width < SPLIT_MIN_WIDTH;
 
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [errorText, setErrorText] = useState("");
-  const [stats, setStats] = useState<Stats>({ fps: 0, segMs: 0, size: "", delegate: "" });
   const [phase, setPhase] = useState<Phase>("live");
-  const [mode, setMode] = useState<GlowMode>("both");
-  const [colorIndex, setColorIndex] = useState(0);
   const { user } = useAuth();
   const [source, setSource] = useState<VideoSource>("phone");
   const [hasVideo, setHasVideo] = useState(false);
   const [phoneStatus, setPhoneStatus] = useState<ReceiverStatus>("waiting");
   const [sourceError, setSourceError] = useState("");
+  const [result, setResult] = useState<AuraReport | null>(null);
+  const [capturedUri, setCapturedUri] = useState<string | null>(null);
   const receiverRef = useRef<PhoneReceiver | null>(null);
   // Always call the latest capture handlers from the phone control channel.
   const actionsRef = useRef({
@@ -104,8 +112,8 @@ export function AuraLabScreen({ navigation }: Props) {
     let segmenter: ImageSegmenter | null = null;
     let renderer: AuraRenderer | null = null;
     let rafId = 0;
+    let scanRafId = 0;
     let videoCallbackId = 0;
-    let delegate = "";
 
     // Small 2D canvas the segmenter reads from. Feeding the full 1080p frame
     // makes MediaPipe return a full-size mask, which is what made it slow.
@@ -114,10 +122,6 @@ export function AuraLabScreen({ navigation }: Props) {
 
     let smooth: Float32Array | null = null;
     let maskBytes: Uint8Array | null = null;
-
-    let frames = 0;
-    let segTotal = 0;
-    let lastStat = performance.now();
 
     function onMasks(masks: MPMask[] | undefined) {
       if (!masks || !renderer) return;
@@ -145,14 +149,10 @@ export function AuraLabScreen({ navigation }: Props) {
       const vh = video!.videoHeight;
       if (!vw || !vh) return;
 
-      // Phone already bakes gravity-upright pixels in phone-camera.html.
-      const w = vw;
-      const h = vh;
-
       // Scale the long side to SEG_SIZE (works for landscape and portrait phones).
-      const scale = SEG_SIZE / Math.max(w, h);
-      const segW = Math.round(w * scale);
-      const segH = Math.round(h * scale);
+      const scale = SEG_SIZE / Math.max(vw, vh);
+      const segW = Math.round(vw * scale);
+      const segH = Math.round(vh * scale);
       if (segCanvas.width !== segW || segCanvas.height !== segH) {
         segCanvas.width = segW;
         segCanvas.height = segH;
@@ -163,29 +163,31 @@ export function AuraLabScreen({ navigation }: Props) {
       segmenter.segmentForVideo(segCanvas, t0, (result) => {
         onMasks(result.confidenceMasks);
       });
-      const t1 = performance.now();
 
-      const { mode: glowMode, colorIndex: ci } = settings.current;
       renderer.render(video!, {
-        color: AURA_COLORS[ci].rgb,
-        mode: glowMode,
-        timeSeconds: t1 / 1000,
+        color: AURA_COLOR,
+        mode: GLOW_MODE,
+        timeSeconds: performance.now() / 1000,
         strength: 1,
       });
+    }
 
-      frames += 1;
-      segTotal += t1 - t0;
-      if (t1 - lastStat >= 500) {
-        setStats({
-          fps: Math.round((frames * 1000) / (t1 - lastStat)),
-          segMs: Math.round(segTotal / frames),
-          size: `${w}x${h}`,
-          delegate,
+    // While analyzing, the live loop is paused. This loop redraws the captured
+    // snapshot with a scan bar that sweeps over the person only.
+    function scanLoop() {
+      if (cancelled) return;
+      const s = settings.current;
+      if (s.scanning && s.frozenSource && renderer) {
+        const t = performance.now() / 1000;
+        renderer.render(s.frozenSource, {
+          color: AURA_COLOR,
+          mode: GLOW_MODE,
+          timeSeconds: t,
+          strength: 1,
+          scan: 0.5 - 0.5 * Math.cos((t * Math.PI * 2) / SCAN_PERIOD),
         });
-        frames = 0;
-        segTotal = 0;
-        lastStat = t1;
       }
+      scanRafId = requestAnimationFrame(scanLoop);
     }
 
     let pending = false;
@@ -238,14 +240,12 @@ export function AuraLabScreen({ navigation }: Props) {
             baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
             ...options,
           });
-          delegate = "GPU";
         } catch (gpuError) {
           console.warn("GPU delegate failed, using CPU:", gpuError);
           segmenter = await ImageSegmenter.createFromOptions(vision, {
             baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" },
             ...options,
           });
-          delegate = "CPU";
         }
         if (cancelled) {
           segmenter.close();
@@ -253,6 +253,7 @@ export function AuraLabScreen({ navigation }: Props) {
         }
         setLoadState("ready");
         schedule();
+        scanLoop();
       } catch (error) {
         console.error("Aura lab failed to start:", error);
         setLoadState("error");
@@ -265,6 +266,7 @@ export function AuraLabScreen({ navigation }: Props) {
     return () => {
       cancelled = true;
       cancelAnimationFrame(rafId);
+      cancelAnimationFrame(scanRafId);
       if (videoCallbackId && "cancelVideoFrameCallback" in video) {
         video.cancelVideoFrameCallback(videoCallbackId);
       }
@@ -344,9 +346,10 @@ export function AuraLabScreen({ navigation }: Props) {
   }, [source, user]);
 
   // Keep the phone shutter UI in sync with Aura Lab's capture phase.
+  // The phone's own page has no "result" state: it goes back to live.
   useEffect(() => {
     if (source !== "phone") return;
-    receiverRef.current?.sendPhase(phase);
+    receiverRef.current?.sendPhase(phase === "result" ? "live" : phase);
   }, [phase, source, hasVideo, phoneStatus]);
 
   function captureRawFrame(): string | null {
@@ -365,7 +368,20 @@ export function AuraLabScreen({ navigation }: Props) {
     return out.toDataURL("image/jpeg", 0.78).split(",")[1] ?? null;
   }
 
-  function syncPhonePhase(next: Phase) {
+  /** Full-resolution copy of the current frame: scan animation source + result photo. */
+  function snapshotFrame(): HTMLCanvasElement | null {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) return null;
+    const snap = document.createElement("canvas");
+    snap.width = video.videoWidth;
+    snap.height = video.videoHeight;
+    const ctx = snap.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0);
+    return snap;
+  }
+
+  function syncPhonePhase(next: "live" | "frozen" | "analyzing") {
     if (sourceRef.current === "phone") {
       receiverRef.current?.sendPhase(next);
     }
@@ -374,15 +390,18 @@ export function AuraLabScreen({ navigation }: Props) {
   /** Step 1: freeze the screen. Nothing is sent yet. */
   function handleCapture() {
     if (phase !== "live" || !ready) {
-      syncPhonePhase(phase === "live" ? "live" : phase);
+      syncPhonePhase(phase === "live" ? "live" : phase === "result" ? "live" : phase);
       return;
     }
     const base64 = captureRawFrame();
-    if (!base64) {
+    const snap = snapshotFrame();
+    if (!base64 || !snap) {
       syncPhonePhase("live");
       return;
     }
     frozenFrame.current = base64;
+    frozenUri.current = snap.toDataURL("image/jpeg", 0.9);
+    settings.current.frozenSource = snap;
     settings.current.frozen = true;
     setPhase("frozen");
     syncPhonePhase("frozen");
@@ -392,22 +411,46 @@ export function AuraLabScreen({ navigation }: Props) {
   async function handleAnalyze() {
     const base64 = frozenFrame.current;
     if (phase !== "frozen" || !base64) {
-      syncPhonePhase(phase);
+      syncPhonePhase(phase === "result" ? "live" : phase);
       return;
     }
     setPhase("analyzing");
     syncPhonePhase("analyzing");
+    settings.current.scanning = true;
     const token = ++analyzeToken.current;
-    const report = await analyzeAura(base64);
+    let report: AuraReport;
+    try {
+      report = await analyzeAura(base64);
+    } catch (error) {
+      console.error("Aura analysis failed:", error);
+      if (token === analyzeToken.current) {
+        settings.current.scanning = false;
+        setPhase("frozen");
+        syncPhonePhase("frozen");
+      }
+      return;
+    }
     if (token !== analyzeToken.current) return; // Retake pressed meanwhile.
-    handleRetake();
-    navigation.navigate("AuraReport", { report });
+
+    settings.current.scanning = false;
+    setCapturedUri(frozenUri.current);
+    setResult(report);
+    setPhase("result");
+    // The phone opens the normal report screen; this screen shows it beside the photo.
+    if (sourceRef.current === "phone") {
+      receiverRef.current?.sendReport(report);
+    }
   }
 
   function handleRetake() {
     analyzeToken.current += 1;
     frozenFrame.current = null;
+    frozenUri.current = null;
     settings.current.frozen = false;
+    settings.current.frozenSource = null;
+    settings.current.scanning = false;
+    setResult(null);
+    setCapturedUri(null);
     setPhase("live");
     syncPhonePhase("live");
   }
@@ -418,17 +461,26 @@ export function AuraLabScreen({ navigation }: Props) {
     retake: handleRetake,
   };
 
+  const mirrored = source === "webcam";
   const canvasStyle: CSSProperties = {
     width: "100%",
     height: "100%",
     objectFit: "contain",
     // Mirror the selfie webcam only; the phone's back camera is not mirrored.
-    transform: source === "webcam" ? "scaleX(-1)" : "none",
+    transform: mirrored ? "scaleX(-1)" : "none",
     display: "block",
     visibility: hasVideo || phase !== "live" ? "visible" : "hidden",
   };
+  const photoStyle: CSSProperties = {
+    width: "100%",
+    height: "100%",
+    objectFit: "contain",
+    transform: mirrored ? "scaleX(-1)" : "none",
+    display: "block",
+  };
 
   const ready = loadState === "ready" && hasVideo;
+  const showResult = phase === "result" && result !== null;
 
   function switchSource(next: VideoSource) {
     if (next === source) return;
@@ -436,175 +488,153 @@ export function AuraLabScreen({ navigation }: Props) {
     setSource(next);
   }
 
+  const linkColor = hasVideo ? "#4ADE80" : phoneStatus === "error" ? "#F87171" : "#FBBF24";
+
   return (
     <SafeAreaView style={styles.shell}>
-      <View style={styles.topBar}>
-        <Pressable
-          onPress={() => navigation.goBack()}
-          hitSlop={10}
-          style={styles.backButton}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Ionicons name="chevron-back" size={24} color={COLORS.text} />
-        </Pressable>
-        <Text style={styles.title}>Aura Lab</Text>
-        <Text style={styles.stats}>
-          {stats.fps ? `${stats.fps} fps` : "—"}
-          {stats.delegate ? ` · ${stats.delegate}` : ""}
-        </Text>
-      </View>
+      {/* Frame source only; never shown. Kept outside the stage so hiding it can't pause playback. */}
+      <video
+        ref={videoRef}
+        playsInline
+        muted
+        style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
+      />
+      <View style={[styles.split, stacked && styles.splitStacked]}>
+        {/* Left half: the camera, then the captured photo once there is a report. */}
+        <View style={[styles.pane, styles.leftPane]}>
+          {showResult && capturedUri ? (
+            <View style={styles.photoFrame}>
+              <img src={capturedUri} alt="Captured photo" style={photoStyle} />
+            </View>
+          ) : null}
 
-      <View style={styles.stage}>
-        <video
-          ref={videoRef}
-          playsInline
-          muted
-          style={{ position: "absolute", width: 1, height: 1, opacity: 0 }}
-        />
-        <canvas ref={canvasRef} style={canvasStyle} />
+          <View style={[styles.stage, showResult && styles.hidden]}>
+            <canvas ref={canvasRef} style={canvasStyle} />
 
-        {loadState === "loading" ? (
-          <View style={styles.overlay}>
-            <ActivityIndicator color={COLORS.accentMuted} />
-            <Text style={styles.overlayText}>Loading aura model…</Text>
-          </View>
-        ) : null}
-        {loadState === "ready" && !hasVideo && phase === "live" ? (
-          <View style={styles.overlay}>
-            {phoneStatus === "connecting" ? (
-              <ActivityIndicator color={COLORS.accentMuted} />
+            {loadState === "loading" ? (
+              <View style={styles.overlay}>
+                <ActivityIndicator color={COLORS.accentMuted} />
+                <Text style={styles.overlayText}>Loading aura model…</Text>
+              </View>
             ) : null}
-            <Text style={styles.overlayTitle}>
-              {source === "phone" ? "Phone camera" : "Webcam"}
-            </Text>
-            <Text style={styles.overlayText}>
-              {sourceError ||
-                (source === "phone"
-                  ? PHONE_STATUS_TEXT[phoneStatus]
-                  : "Opening webcam…")}
-            </Text>
-          </View>
-        ) : null}
-        {loadState === "error" ? (
-          <View style={styles.overlay}>
-            <Text style={styles.overlayTitle}>Could not start</Text>
-            <Text style={styles.overlayText}>{errorText}</Text>
-          </View>
-        ) : null}
-        {phase === "analyzing" ? (
-          <View style={styles.badge}>
-            <ActivityIndicator color={COLORS.accent} size="small" />
-            <Text style={styles.badgeText}>Reading aura…</Text>
-          </View>
-        ) : null}
-      </View>
-
-      <View style={styles.controls}>
-        <View style={styles.row}>
-          {AURA_COLORS.map((c, index) => (
-            <Pressable
-              key={c.name}
-              accessibilityRole="button"
-              accessibilityLabel={`${c.name} aura`}
-              onPress={() => {
-                setColorIndex(index);
-                settings.current.colorIndex = index;
-              }}
-              style={[
-                styles.swatch,
-                { backgroundColor: `rgb(${c.rgb.join(",")})` },
-                colorIndex === index && styles.swatchActive,
-              ]}
-            />
-          ))}
-          <View style={styles.modeGroup}>
-            {(["both", "outer", "inner"] as const).map((m) => (
-              <Pressable
-                key={m}
-                accessibilityRole="button"
-                accessibilityLabel={`${m} glow`}
-                onPress={() => {
-                  setMode(m);
-                  settings.current.mode = m;
-                }}
-                style={[styles.chip, mode === m && styles.chipActive]}
-              >
-                <Text style={styles.chipText}>
-                  {m === "both" ? "Both" : m === "outer" ? "Outer" : "Inner"}
+            {loadState === "ready" && !hasVideo && phase === "live" ? (
+              <View style={styles.overlay}>
+                {phoneStatus === "connecting" ? (
+                  <ActivityIndicator color={COLORS.accentMuted} />
+                ) : null}
+                <Text style={styles.overlayTitle}>
+                  {source === "phone" ? "Phone camera" : "Webcam"}
                 </Text>
-              </Pressable>
-            ))}
+                <Text style={styles.overlayText}>
+                  {sourceError ||
+                    (source === "phone"
+                      ? PHONE_STATUS_TEXT[phoneStatus]
+                      : "Opening webcam…")}
+                </Text>
+              </View>
+            ) : null}
+            {loadState === "error" ? (
+              <View style={styles.overlay}>
+                <Text style={styles.overlayTitle}>Could not start</Text>
+                <Text style={styles.overlayText}>{errorText}</Text>
+              </View>
+            ) : null}
+            {phase === "analyzing" ? (
+              <View style={styles.badge}>
+                <ActivityIndicator color={COLORS.accent} size="small" />
+                <Text style={styles.badgeText}>Reading aura…</Text>
+              </View>
+            ) : null}
           </View>
-        </View>
 
-        <View style={styles.row}>
-          <Text style={styles.label}>Source</Text>
-          {(["phone", "webcam"] as const).map((s) => (
-            <Pressable
-              key={s}
-              accessibilityRole="button"
-              accessibilityLabel={`Use ${s} camera`}
-              onPress={() => switchSource(s)}
-              style={[styles.chip, source === s && styles.chipActive]}
-            >
-              <Text style={styles.chipText}>{s === "phone" ? "Phone" : "Webcam"}</Text>
-            </Pressable>
-          ))}
-          {source === "phone" ? (
-            <View style={styles.linkState}>
-              <View
-                style={[
-                  styles.linkDot,
-                  {
-                    backgroundColor: hasVideo
-                      ? "#4ADE80"
-                      : phoneStatus === "error"
-                        ? "#F87171"
-                        : "#FBBF24",
-                  },
-                ]}
-              />
-              <Text style={styles.chipText}>{hasVideo ? "Live" : phoneStatus}</Text>
+          {!phoneOwnsControls && !showResult ? (
+            <View style={styles.row}>
+              {phase === "live" ? (
+                <Pressable
+                  style={[styles.primaryButton, !ready && styles.disabled]}
+                  onPress={handleCapture}
+                  disabled={!ready}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.primaryText}>Capture</Text>
+                </Pressable>
+              ) : (
+                <>
+                  <Pressable
+                    style={styles.secondaryButton}
+                    onPress={handleRetake}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.secondaryText}>Retake</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.primaryButton, phase === "analyzing" && styles.disabled]}
+                    onPress={handleAnalyze}
+                    disabled={phase === "analyzing"}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.primaryText}>Analyze aura</Text>
+                  </Pressable>
+                </>
+              )}
             </View>
           ) : null}
         </View>
 
-        {phoneOwnsControls ? (
-          <></>
-        ) : (
-          <View style={styles.row}>
-            {phase === "live" ? (
-              <Pressable
-                style={[styles.primaryButton, !ready && styles.disabled]}
-                onPress={handleCapture}
-                disabled={!ready}
-                accessibilityRole="button"
-              >
-                <Text style={styles.primaryText}>Capture</Text>
-              </Pressable>
-            ) : (
-              <>
-                <Pressable
-                  style={styles.secondaryButton}
-                  onPress={handleRetake}
-                  accessibilityRole="button"
-                >
-                  <Text style={styles.secondaryText}>Retake</Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.primaryButton, phase === "analyzing" && styles.disabled]}
-                  onPress={handleAnalyze}
-                  disabled={phase === "analyzing"}
-                  accessibilityRole="button"
-                >
-                  <Text style={styles.primaryText}>Analyze aura</Text>
-                </Pressable>
-              </>
-            )}
-          </View>
-        )}
+        {/* TO DO: leaderboard */}
+        <View style={[styles.pane, styles.rightPane]}>
+          {showResult && result ? (
+            <LinearGradient
+              colors={[hexToRgba(result.aura_color, 0.22), COLORS.bg, COLORS.bg]}
+              start={{ x: 0.1, y: 0 }}
+              end={{ x: 0.9, y: 1 }}
+              style={styles.reportPanel}
+            >
+              <AuraReportView report={result} paddingTop={20}>
+                <GameButton label="Scan again" onPress={handleRetake} />
+              </AuraReportView>
+            </LinearGradient>
+          ) : (
+            <View style={styles.hero}>
+              <Text style={[styles.heroTitle, stacked && styles.heroTitleStacked]}>
+                AURA
+              </Text>
+              <Text style={styles.heroSubtitle}>
+                Step in front of the camera and let the aura do the talking.
+              </Text>
+              <View style={styles.sourceRow}>
+                {(["phone", "webcam"] as const).map((s) => (
+                  <Pressable
+                    key={s}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Use ${s} camera`}
+                    onPress={() => switchSource(s)}
+                    style={[styles.chip, source === s && styles.chipActive]}
+                  >
+                    <Text style={styles.chipText}>{s === "phone" ? "Phone" : "Webcam"}</Text>
+                  </Pressable>
+                ))}
+                {source === "phone" ? (
+                  <View style={styles.linkState}>
+                    <View style={[styles.linkDot, { backgroundColor: linkColor }]} />
+                    <Text style={styles.chipText}>{hasVideo ? "Live" : phoneStatus}</Text>
+                  </View>
+                ) : null}
+              </View>
+            </View>
+          )}
+        </View>
       </View>
+
+      <Pressable
+        onPress={() => navigation.goBack()}
+        hitSlop={10}
+        style={styles.backButton}
+        accessibilityRole="button"
+        accessibilityLabel="Go back"
+      >
+        <Ionicons name="chevron-back" size={24} color={COLORS.text} />
+      </Pressable>
     </SafeAreaView>
   );
 }
@@ -613,30 +643,55 @@ const styles = StyleSheet.create({
   shell: {
     flex: 1,
     backgroundColor: COLORS.bg,
-    paddingHorizontal: 18,
-    paddingTop: 12,
-    paddingBottom: 18,
   },
-  topBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 14,
-    gap: 8,
-  },
-  backButton: { width: 44, height: 44, justifyContent: "center" },
-  title: {
+  split: {
     flex: 1,
-    color: COLORS.text,
-    fontSize: 22,
-    fontWeight: "900",
-    letterSpacing: -0.5,
+    flexDirection: "row",
+    gap: 24,
+    padding: 24,
+    // Room for the back button above the camera.
+    paddingTop: 72,
   },
-  stats: {
+  splitStacked: { flexDirection: "column" },
+  pane: { flex: 1, minHeight: 0, gap: 14 },
+  leftPane: { justifyContent: "center" },
+  rightPane: { justifyContent: "center" },
+  hidden: { display: "none" },
+  backButton: {
+    position: "absolute",
+    top: 16,
+    left: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(15,17,26,0.6)",
+  },
+  hero: { paddingHorizontal: 32, gap: 20 },
+  heroTitle: {
+    color: COLORS.text,
+    fontSize: 120,
+    lineHeight: 112,
+    fontWeight: "900",
+    letterSpacing: -4,
+  },
+  heroTitleStacked: { fontSize: 64, lineHeight: 62, letterSpacing: -2 },
+  heroSubtitle: {
     color: COLORS.textMuted,
-    fontSize: 12,
-    fontWeight: "700",
-    minWidth: 88,
-    textAlign: "right",
+    fontSize: 18,
+    lineHeight: 26,
+    fontWeight: "600",
+    maxWidth: 420,
+  },
+  sourceRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
+  photoFrame: {
+    flex: 1,
+    borderRadius: 22,
+    overflow: "hidden",
+    backgroundColor: "#000",
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
   stage: {
     flex: 1,
@@ -645,7 +700,13 @@ const styles = StyleSheet.create({
     backgroundColor: "#000",
     borderWidth: 1,
     borderColor: COLORS.border,
-    marginBottom: 14,
+  },
+  reportPanel: {
+    flex: 1,
+    borderRadius: 22,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
   overlay: {
     position: "absolute",
@@ -663,7 +724,7 @@ const styles = StyleSheet.create({
   overlayText: { color: COLORS.textMuted, fontSize: 14, textAlign: "center" },
   badge: {
     position: "absolute",
-    top: 14,
+    bottom: 14,
     alignSelf: "center",
     flexDirection: "row",
     alignItems: "center",
@@ -674,20 +735,9 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(15,17,26,0.7)",
   },
   badgeText: { color: COLORS.text, fontSize: 13, fontWeight: "800" },
-  controls: { gap: 10 },
   row: { flexDirection: "row", alignItems: "center", gap: 10, flexWrap: "wrap" },
-  swatch: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: 2,
-    borderColor: "transparent",
-  },
-  swatchActive: { borderColor: "#fff" },
-  label: { color: COLORS.textMuted, fontSize: 12, fontWeight: "700" },
-  linkState: { marginLeft: "auto", flexDirection: "row", alignItems: "center", gap: 6 },
+  linkState: { marginLeft: 8, flexDirection: "row", alignItems: "center", gap: 6 },
   linkDot: { width: 8, height: 8, borderRadius: 4 },
-  modeGroup: { marginLeft: "auto", flexDirection: "row", gap: 8 },
   chip: {
     paddingHorizontal: 12,
     paddingVertical: 7,
@@ -717,12 +767,5 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.surfaceRaised,
   },
   secondaryText: { color: COLORS.text, fontSize: 15, fontWeight: "800" },
-  phoneHint: {
-    color: COLORS.textMuted,
-    fontSize: 13,
-    fontWeight: "600",
-    textAlign: "center",
-    paddingVertical: 14,
-  },
   disabled: { opacity: 0.6 },
 });

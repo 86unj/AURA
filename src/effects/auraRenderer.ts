@@ -19,6 +19,11 @@ export type AuraFrameOptions = {
   mode: GlowMode;
   timeSeconds: number;
   strength: number;
+  /**
+   * Scan bar position, 0 (top) to 1 (bottom). The bar only shows on the
+   * person (inside the segmentation mask). Omit or pass a negative to hide.
+   */
+  scan?: number;
 };
 
 export type AuraRenderer = {
@@ -110,6 +115,7 @@ uniform float uTime;
 uniform float uStrength;
 uniform int uMode;
 uniform float uHasMask;
+uniform float uScan;
 
 float hash21(vec2 p) {
   return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
@@ -160,6 +166,17 @@ void main() {
   vec3 col = base
     + uColor * glow * pulse * flow * uStrength
     + mix(uColor, vec3(1.0), 0.5) * rim * 0.5 * uStrength;
+
+  // Scan bar: only lights up where the person is. Everything else dims.
+  if (uScan >= 0.0) {
+    float person = smoothstep(0.3, 0.7, bn);
+    float dist = uv.y - uScan;
+    float line = exp(-dist * dist * 6000.0);
+    float trail = exp(-max(-dist, 0.0) * 16.0) * step(dist, 0.0);
+    vec3 scanCol = mix(uColor, vec3(1.0), 0.45);
+    col *= 1.0 - 0.45 * (1.0 - person);
+    col += scanCol * (line * 1.4 + trail * 0.35) * person;
+  }
   outColor = vec4(col, 1.0);
 }`;
 
@@ -251,6 +268,7 @@ export function createAuraRenderer(canvas: HTMLCanvasElement): AuraRenderer {
     strength: gl.getUniformLocation(compositeProgram, "uStrength"),
     mode: gl.getUniformLocation(compositeProgram, "uMode"),
     hasMask: gl.getUniformLocation(compositeProgram, "uHasMask"),
+    scan: gl.getUniformLocation(compositeProgram, "uScan"),
   };
 
   // Full-screen quad (two triangles).
@@ -388,6 +406,7 @@ export function createAuraRenderer(canvas: HTMLCanvasElement): AuraRenderer {
       gl.uniform1f(u.strength, options.strength);
       gl.uniform1i(u.mode, mode);
       gl.uniform1f(u.hasMask, hasMask ? 1 : 0);
+      gl.uniform1f(u.scan, options.scan ?? -1);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
     },
 
