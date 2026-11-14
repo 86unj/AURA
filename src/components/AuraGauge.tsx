@@ -90,12 +90,12 @@ export function AuraGauge({ value, color, size = 190 }: AuraGaugeProps) {
           r={innerRadius}
           fill="rgba(255,255,255,0.03)"
         />
-        <Circle
+        {/* <Circle
           cx={needleX}
           cy={needleY}
           r={needleDotRadius}
           fill={COLORS.text}
-        />
+        /> */}
       </Svg>
 
       <View pointerEvents="none" style={styles.centerCopy}>
@@ -110,9 +110,9 @@ export function AuraGauge({ value, color, size = 190 }: AuraGaugeProps) {
         >
           {clampedValue}
         </Text>
-        <Text style={[styles.scoreRange, { fontSize: rangeFontSize }]}>
+        {/* <Text style={[styles.scoreRange, { fontSize: rangeFontSize }]}>
           0-100
-        </Text>
+        </Text> */}
       </View>
     </View>
   );
