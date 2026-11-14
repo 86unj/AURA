@@ -221,11 +221,10 @@
        * urn:3gpp:video-orientation RTP extension instead of rotating pixels.
        * Aura Lab uploads frames with WebGL texImage2D, which frequently
        * ignores that metadata — so the laptop looks sideways. We (1) strip
-       * the extension from the offer and (2) re-draw upright into a canvas
-       * and send canvas.captureStream() so the bitstream itself is upright.
+       * the extension from the offer and (2) re-draw the frames into a canvas
+       * (rotated to match the device angle when needed) and send
+       * canvas.captureStream() so the pixels themselves are upright.
        *
-       * Device angle comes from the React Native host (expo-screen-orientation
-       * via window.__auraDeviceAngle), with screen/deviceorientation fallbacks.
        * Capture UI lives here; Aura Lab still freezes/analyzes the frame.
        */
       const config = window.AURA_CONFIG || {
@@ -266,128 +265,56 @@
         return sdp.replace(/^a=extmap:[^\r\n]*urn:3gpp:video-orientation[^\r\n]*\r?\n/gm, "");
       }
 
-      /** Degrees clockwise from portrait-up: 0 | 90 | 180 | 270. */
-      let deviceAngle = 0;
-      let deviceAngleFromHost = false;
-
-      function normalizeAngle(value) {
-        const n = ((Number(value) % 360) + 360) % 360;
-        if (n >= 45 && n < 135) return 90;
-        if (n >= 135 && n < 225) return 180;
-        if (n >= 225 && n < 315) return 270;
+      /**
+       * Device angle, clockwise from portrait-up (0/90/180/270).
+       * The React Native host injects window.__auraDeviceAngle from
+       * expo-screen-orientation; fall back to the browser's own value.
+       */
+      function getDeviceAngle() {
+        if (typeof window.__auraDeviceAngle === "number") return window.__auraDeviceAngle;
+        if (screen.orientation && typeof screen.orientation.angle === "number") {
+          return screen.orientation.angle;
+        }
         return 0;
       }
 
-      function readBrowserAngle() {
-        if (screen.orientation && typeof screen.orientation.angle === "number") {
-          return normalizeAngle(screen.orientation.angle);
-        }
-        if (typeof window.orientation === "number") {
-          return normalizeAngle(window.orientation);
-        }
-        return window.innerWidth > window.innerHeight ? 90 : 0;
-      }
-
-      function syncDeviceAngle() {
-        if (typeof window.__auraDeviceAngle === "number") {
-          deviceAngle = normalizeAngle(window.__auraDeviceAngle);
-          deviceAngleFromHost = true;
-          return deviceAngle;
-        }
-        if (!deviceAngleFromHost) {
-          deviceAngle = readBrowserAngle();
-        }
-        return deviceAngle;
-      }
-
       /**
-       * 90° clockwise turns so the outgoing canvas matches gravity
-       * (subject upright on the laptop / in the analyze API image).
+       * Quarter turns (clockwise) needed so the frame matches the phone's
+       * orientation. Portrait vs landscape comes from the viewport itself, so
+       * a wrong angle can never rotate a frame that already matches. The
+       * angle only picks the direction when the phone is in landscape.
        */
       function uprightTurns(frameW, frameH) {
-        const angle = syncDeviceAngle();
-        const wantLandscape = angle === 90 || angle === 270;
+        const deviceLandscape = window.innerWidth > window.innerHeight;
         const frameLandscape = frameW >= frameH;
-
-        if (frameLandscape === wantLandscape) {
-          // Aspects already match; flip 180° when the device is upside-down
-          // or the wrong landscape direction relative to a landscape buffer.
-          if (angle === 180) return 2;
-          if (angle === 270 && frameLandscape) return 2;
-          return 0;
-        }
-
-        // Aspects disagree — rotate a quarter turn toward the device angle.
-        if (!wantLandscape) {
-          // Portrait device, landscape sensor buffer (most common).
-          return angle === 180 ? 3 : 1;
-        }
-        // Landscape device, portrait-coded buffer.
-        return angle === 270 ? 3 : 1;
+        if (deviceLandscape === frameLandscape) return 0;
+        if (!deviceLandscape) return 1;
+        return getDeviceAngle() === 270 ? 3 : 1;
       }
-
-      function onHostAngleMaybeChanged() {
-        // Poll lightly; RN injects __auraDeviceAngle on orientation changes.
-        syncDeviceAngle();
-      }
-
-      if (screen.orientation && typeof screen.orientation.addEventListener === "function") {
-        screen.orientation.addEventListener("change", () => {
-          if (!deviceAngleFromHost) deviceAngle = readBrowserAngle();
-        });
-      }
-      window.addEventListener("orientationchange", () => {
-        if (!deviceAngleFromHost) deviceAngle = readBrowserAngle();
-      });
-      window.addEventListener("resize", onHostAngleMaybeChanged);
-      // deviceorientation covers portrait-locked WebViews where screen.angle stays 0.
-      window.addEventListener("deviceorientation", (event) => {
-        if (deviceAngleFromHost) return;
-        const beta = event.beta;
-        const gamma = event.gamma;
-        if (beta == null || gamma == null) return;
-        const absBeta = Math.abs(beta);
-        const absGamma = Math.abs(gamma);
-        if (absGamma > 45 && absGamma > absBeta) {
-          deviceAngle = gamma > 0 ? 90 : 270;
-        } else if (beta < -45 || beta > 135) {
-          deviceAngle = 180;
-        } else if (absBeta > 45) {
-          deviceAngle = 0;
-        }
-      });
-      setInterval(onHostAngleMaybeChanged, 500);
-      syncDeviceAngle();
 
       function paintFrame() {
         const vw = video.videoWidth;
         const vh = video.videoHeight;
-        if (!vw || !vh || !stageCtx) {
-          paintId = requestAnimationFrame(paintFrame);
-          return;
+        if (vw && vh && stageCtx) {
+          const turns = uprightTurns(vw, vh);
+          const swap = turns % 2 === 1;
+          const outW = swap ? vh : vw;
+          const outH = swap ? vw : vh;
+          if (stage.width !== outW || stage.height !== outH) {
+            stage.width = outW;
+            stage.height = outH;
+          }
+          stageCtx.save();
+          if (turns === 1) {
+            stageCtx.translate(outW, 0);
+            stageCtx.rotate(Math.PI / 2);
+          } else if (turns === 3) {
+            stageCtx.translate(0, outH);
+            stageCtx.rotate(-Math.PI / 2);
+          }
+          stageCtx.drawImage(video, 0, 0, vw, vh);
+          stageCtx.restore();
         }
-        // Keep painting while frozen so the laptop still has a live feed if
-        // the user retakes; Aura Lab freezes its own canvas on capture.
-        const turns = uprightTurns(vw, vh) % 4;
-        const outW = turns % 2 === 1 ? vh : vw;
-        const outH = turns % 2 === 1 ? vw : vh;
-        if (stage.width !== outW || stage.height !== outH) {
-          stage.width = outW;
-          stage.height = outH;
-        }
-        stageCtx.save();
-        if (turns === 1) {
-          stageCtx.translate(outW, 0);
-          stageCtx.rotate(Math.PI / 2);
-        } else if (turns === 2) {
-          stageCtx.translate(outW, outH);
-          stageCtx.rotate(Math.PI);
-        } else if (turns === 3) {
-          stageCtx.translate(0, outH);
-          stageCtx.rotate(-Math.PI / 2);
-        }
-        stageCtx.drawImage(video, 0, 0, vw, vh);
-        stageCtx.restore();
         paintId = requestAnimationFrame(paintFrame);
       }
 
