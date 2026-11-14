@@ -10,12 +10,14 @@ import {
   RemotePhase,
   SignalMessage,
 } from "./remoteSignaling";
+import { AuraReport } from "../types";
 
 export type ReceiverStatus = "waiting" | "connecting" | "connected" | "error";
 
 export type PhoneReceiver = {
   stop(): Promise<void>;
   sendPhase(phase: RemotePhase): void;
+  sendReport(report: AuraReport): void;
 };
 
 type Callbacks = {
@@ -149,6 +151,10 @@ export function startPhoneReceiver(
     sendPhase(phase) {
       if (stopped) return;
       channel.send("phase", { phase });
+    },
+    sendReport(report) {
+      if (stopped) return;
+      channel.send("report", { report });
     },
     async stop() {
       stopped = true;

@@ -16,6 +16,7 @@
  *   both   → "bye"                          leaving
  *   phone  → "control" { action }           shutter / analyze / retake on laptop
  *   laptop → "phase"   { phase }            sync Aura Lab capture phase to phone UI
+ *   laptop → "report"  { report }           analysis result; phone opens its report screen
  */
 import { supabase } from "./supabaseClient";
 
@@ -35,7 +36,8 @@ export type SignalMessage = {
     | "ice"
     | "bye"
     | "control"
-    | "phase";
+    | "phase"
+    | "report";
   data?: any;
 };
 

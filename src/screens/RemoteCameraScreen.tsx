@@ -27,7 +27,6 @@ function orientationToAngle(orientation: ScreenOrientation.Orientation): number 
       return 180;
     case ScreenOrientation.Orientation.LANDSCAPE_RIGHT:
       return 270;
-    case ScreenOrientation.Orientation.PORTRAIT_UP:
     default:
       return 0;
   }
@@ -70,6 +69,7 @@ export function RemoteCameraScreen({ navigation }: Props) {
   const { user } = useAuth();
   const webviewRef = useRef<ComponentRef<typeof WebView> | null>(null);
   const channelRef = useRef<SignalingChannel | null>(null);
+  const reportShownRef = useRef(false);
   const [linkState, setLinkState] = useState<LinkState>("waiting");
   const [errorText, setErrorText] = useState<string | null>(null);
 
@@ -80,26 +80,18 @@ export function RemoteCameraScreen({ navigation }: Props) {
   );
 
   const injectDeviceAngle = useCallback((angle: number) => {
-    const script = `window.__auraDeviceAngle = ${angle}; true;`;
-    webviewRef.current?.injectJavaScript(script);
+    webviewRef.current?.injectJavaScript(`window.__auraDeviceAngle = ${angle}; true;`);
   }, []);
 
-  // Allow the phone to rotate while remoting; lock portrait again on leave.
-  // Also push the physical/screen angle into the WebView so phone-camera.html
-  // can bake upright pixels even when the browser orientation APIs are weak.
+  // Allow the phone to rotate while remoting and keep the page told of the
+  // device angle; lock portrait again on leave.
   useFocusEffect(
     useCallback(() => {
       let subscription: ScreenOrientation.Subscription | null = null;
       let active = true;
 
       (async () => {
-        try {
-          await ScreenOrientation.unlockAsync();
-          const current = await ScreenOrientation.getOrientationAsync();
-          if (active) injectDeviceAngle(orientationToAngle(current));
-        } catch {
-          // Expo Go / web stubs may not support unlock; page still has fallbacks.
-        }
+        await ScreenOrientation.unlockAsync().catch(() => {});
         if (!active) return;
         subscription = ScreenOrientation.addOrientationChangeListener((event) => {
           injectDeviceAngle(orientationToAngle(event.orientationInfo.orientation));
@@ -118,6 +110,14 @@ export function RemoteCameraScreen({ navigation }: Props) {
   useEffect(() => {
     if (!user) return;
     const channel = joinSignalingChannel(user.id, "phone", (message) => {
+      if (message.kind === "report") {
+        // Laptop finished analyzing: show the normal report screen here.
+        if (message.data?.report) {
+          reportShownRef.current = true;
+          navigation.navigate("AuraReport", { report: message.data.report, mode: "scan" });
+        }
+        return;
+      }
       const script = `window.auraOnSignal && window.auraOnSignal(${JSON.stringify(message)}); true;`;
       webviewRef.current?.injectJavaScript(script);
     });
@@ -129,7 +129,17 @@ export function RemoteCameraScreen({ navigation }: Props) {
       channelRef.current = null;
       channel.leave().catch(() => {});
     };
-  }, [user]);
+  }, [user, navigation]);
+
+  // Back from the report: ask the laptop to reset to its idle screen.
+  useFocusEffect(
+    useCallback(() => {
+      if (reportShownRef.current) {
+        reportShownRef.current = false;
+        channelRef.current?.send("control", { action: "retake" });
+      }
+    }, []),
+  );
 
   function handleMessage(event: WebViewMessageEvent) {
     let data: PageMessage;
@@ -141,7 +151,7 @@ export function RemoteCameraScreen({ navigation }: Props) {
     switch (data.type) {
       case "page-ready":
         setErrorText(null);
-        // Page just loaded — push the latest angle before streaming starts.
+        // Page just loaded: give it the current angle before streaming starts.
         ScreenOrientation.getOrientationAsync()
           .then((orientation) => injectDeviceAngle(orientationToAngle(orientation)))
           .catch(() => {});
