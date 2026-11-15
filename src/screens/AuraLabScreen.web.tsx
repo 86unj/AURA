@@ -19,6 +19,7 @@ import { analyzeAura } from "../services/analyzeAura";
 import { AuraRenderer, createAuraRenderer } from "../effects/auraRenderer";
 import { AuraReportView, hexToRgba } from "../components/AuraReportView";
 import { GameButton } from "../components/GameButton";
+import { ScanningOverlay } from "../components/ScanningOverlay";
 import { useAuth } from "../context/AuthContext";
 import { PhoneReceiver, ReceiverStatus, startPhoneReceiver } from "../services/phoneReceiver";
 import { AuraReport } from "../types";
@@ -581,10 +582,7 @@ export function AuraLabScreen({ navigation }: Props) {
               </View>
             ) : null}
             {phase === "analyzing" ? (
-              <View style={styles.badge}>
-                <ActivityIndicator color={COLORS.accent} size="small" />
-                <Text style={styles.badgeText}>Reading aura…</Text>
-              </View>
+              <ScanningOverlay dimmed={false} showScanLine={false} />
             ) : null}
           </View>
 
@@ -762,19 +760,6 @@ const styles = StyleSheet.create({
   },
   overlayTitle: { color: COLORS.text, fontSize: 18, fontWeight: "800" },
   overlayText: { color: COLORS.textMuted, fontSize: 14, textAlign: "center" },
-  badge: {
-    position: "absolute",
-    bottom: 14,
-    alignSelf: "center",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: "rgba(15,17,26,0.7)",
-  },
-  badgeText: { color: COLORS.text, fontSize: 13, fontWeight: "800" },
   row: { flexDirection: "row", alignItems: "center", gap: 10, flexWrap: "wrap" },
   linkState: { marginLeft: 8, flexDirection: "row", alignItems: "center", gap: 6 },
   linkDot: { width: 8, height: 8, borderRadius: 4 },

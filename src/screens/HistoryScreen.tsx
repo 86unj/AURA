@@ -191,7 +191,7 @@ export function HistoryScreen({ navigation }: Props) {
             size={isGrid ? 118 : 138}
           />
           <View style={styles.metaColumn}>
-            <ThreatBadge level={item.threat_level} />
+            {/* <ThreatBadge level={item.threat_level} /> */}
             <View style={styles.colorRow}>
               <View
                 style={[

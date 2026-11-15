@@ -236,7 +236,7 @@ export function DailyAuraScreen({ navigation }: Props) {
               onPress={() => handleViewReport(todayRecord)}
             >
               <View style={styles.todayPreviewTop}>
-                <ThreatBadge level={todayRecord.threat_level} />
+                {/* <ThreatBadge level={todayRecord.threat_level} /> */}
                 <Text style={styles.todayPreviewLink}>More</Text>
               </View>
               <Text style={styles.todaySubject}>{todayRecord.subject}</Text>

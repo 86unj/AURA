@@ -84,16 +84,16 @@ export function AuraReportView({ report, mode = "scan", paddingTop = 100, childr
 
           <View style={styles.heroRow}>
             <AuraGauge value={report.vibe_score} color={report.aura_color} />
-            <View
-              style={[
-                styles.rarityPill,
-                { backgroundColor: `${rarity.color}1F`, borderColor: `${rarity.color}55` },
-              ]}
-            >
-              <Text style={[styles.rarityPillText, { color: rarity.color }]}>{rarity.label}</Text>
-            </View>
 
             <View style={styles.colorBlock}>
+              <View
+                style={[
+                  styles.rarityPill,
+                  { backgroundColor: `${rarity.color}1F`, borderColor: `${rarity.color}55` },
+                ]}
+              >
+                <Text style={[styles.rarityPillText, { color: rarity.color }]}>{rarity.label}</Text>
+              </View>
               <View style={[styles.colorSwatch, { backgroundColor: report.aura_color }]} />
               <Text style={styles.colorHex}>{report.aura_color.toUpperCase()}</Text>
             </View>
@@ -191,6 +191,7 @@ const styles = StyleSheet.create({
     height: 54,
     borderRadius: 18,
     borderWidth: 1,
+    marginTop: 10,
     borderColor: "rgba(255,255,255,0.18)",
   },
   colorHex: {

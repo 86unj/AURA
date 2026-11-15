@@ -21,7 +21,14 @@ const MESSAGES = [
   "Estimating WiFi password withholding score...",
 ];
 
-export function ScanningOverlay() {
+type Props = {
+  /** Darken the frame (default). Turn off when another scan effect should stay visible. */
+  dimmed?: boolean;
+  /** Draw the CSS scan line (default). Turn off when a GPU scan already covers the person. */
+  showScanLine?: boolean;
+};
+
+export function ScanningOverlay({ dimmed = true, showScanLine = true }: Props) {
   const [containerHeight, setContainerHeight] = useState(0);
   const [msgIndex, setMsgIndex] = useState(0);
   const lineY = useSharedValue(0);
@@ -36,7 +43,7 @@ export function ScanningOverlay() {
   }, [pulse]);
 
   useEffect(() => {
-    if (containerHeight === 0) return;
+    if (!showScanLine || containerHeight === 0) return;
     lineY.value = 0;
     lineY.value = withRepeat(
       withTiming(containerHeight, {
@@ -46,7 +53,7 @@ export function ScanningOverlay() {
       -1,
       true,
     );
-  }, [containerHeight, lineY]);
+  }, [containerHeight, lineY, showScanLine]);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -67,15 +74,22 @@ export function ScanningOverlay() {
 
   return (
     <View
-      style={[StyleSheet.absoluteFill, styles.container]}
+      style={[
+        StyleSheet.absoluteFill,
+        styles.container,
+        dimmed ? styles.dimmed : styles.clear,
+      ]}
       onLayout={(e) => setContainerHeight(e.nativeEvent.layout.height)}
+      pointerEvents="none"
     >
-      <Animated.View style={[styles.scanLine, lineStyle]} />
+      {showScanLine ? <Animated.View style={[styles.scanLine, lineStyle]} /> : null}
 
-      <View style={styles.center} pointerEvents="none">
+      <View style={styles.center}>
         <Animated.View style={[styles.dot, dotStyle]} />
-        <Text style={styles.title}>READING AURA</Text>
-        <Text style={styles.subtitle}>{MESSAGES[msgIndex]}</Text>
+        <Text style={[styles.title, !dimmed && styles.titleOnVideo]}>READING AURA</Text>
+        <Text style={[styles.subtitle, !dimmed && styles.subtitleOnVideo]}>
+          {MESSAGES[msgIndex]}
+        </Text>
       </View>
     </View>
   );
@@ -83,8 +97,13 @@ export function ScanningOverlay() {
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: "rgba(5, 7, 12, 0.72)",
     overflow: "hidden",
+  },
+  dimmed: {
+    backgroundColor: "rgba(5, 7, 12, 0.72)",
+  },
+  clear: {
+    backgroundColor: "transparent",
   },
   scanLine: {
     position: "absolute",
@@ -118,11 +137,23 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 1.2,
   },
+  titleOnVideo: {
+    textShadowColor: "rgba(5, 7, 12, 0.85)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 8,
+  },
   subtitle: {
     color: "#C4B5FD",
     fontSize: 12,
     fontWeight: "600",
     letterSpacing: 0.8,
     opacity: 0.85,
+    textAlign: "center",
+    paddingHorizontal: 24,
+  },
+  subtitleOnVideo: {
+    textShadowColor: "rgba(5, 7, 12, 0.9)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 6,
   },
 });
