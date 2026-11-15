@@ -343,12 +343,16 @@ export function CameraScreen({ navigation, route }: Props) {
       icon: "phone-portrait-outline",
       onPress: () => navigation.navigate("RemoteCamera"),
     },
-    {
-      key: "auralab",
-      label: "Aura lab",
-      icon: "sparkles-outline",
-      onPress: () => navigation.navigate("AuraLab"),
-    },
+    ...(Platform.OS === "web"
+      ? [
+          {
+            key: "auralab",
+            label: "Aura lab",
+            icon: "sparkles-outline" as const,
+            onPress: () => navigation.navigate("AuraLab"),
+          },
+        ]
+      : []),
   ];
 
   if (!permission) {

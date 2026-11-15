@@ -14,8 +14,7 @@ export function AuraLabScreen({ navigation }: Props) {
       <View style={styles.center}>
         <Text style={styles.title}>Aura lab is web only</Text>
         <Text style={styles.body}>
-          Open this app in a laptop browser (npm run web) to try the live aura
-          effect.
+          Open Aura on a laptop browser to try the live aura effect.
         </Text>
         <Pressable style={styles.button} onPress={() => navigation.goBack()}>
           <Text style={styles.buttonText}>Back</Text>

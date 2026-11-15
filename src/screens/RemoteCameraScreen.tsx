@@ -154,10 +154,10 @@ export function RemoteCameraScreen({ navigation }: Props) {
   if (!PHONE_CAMERA_URL) {
     body = (
       <View style={styles.centerState}>
-        <Text style={styles.stateTitle}>Remote camera URL not set</Text>
+        <Text style={styles.stateTitle}>Remote camera unavailable</Text>
         <Text style={styles.stateBody}>
-          Set EXPO_PUBLIC_REMOTE_CAMERA_URL in .env to the HTTPS address of
-          phone-camera.html, then restart Expo.
+          This feature isn't set up yet. Try again later, or use Scan on this
+          phone.
         </Text>
       </View>
     );

@@ -77,7 +77,7 @@ export async function saveAuraReport(
 ): Promise<SavedAuraReport> {
   if (!isSupabaseConfigured) {
     throw new Error(
-      "Supabase is not configured. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY in your .env file.",
+      "Saving is unavailable right now. Try again later.",
     );
   }
 
