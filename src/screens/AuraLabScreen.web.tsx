@@ -137,9 +137,38 @@ export function AuraLabScreen({ navigation }: Props) {
     analyze: async () => {},
     retake: () => {},
   });
-  // Capture/analyze live on the phone when Phone source is selected.
+  // Phone UI owns on-screen buttons; laptop drives the flow with keys for demos.
   const phoneOwnsControls = source === "phone";
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
   sourceRef.current = source;
+
+  // Space advances the flow; Esc / Backspace retakes. Works even when the
+  // audience screen is the one with the mouse focus elsewhere.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
+
+      const key = event.key;
+      if (key === " " || key === "Enter") {
+        event.preventDefault();
+        const current = phaseRef.current;
+        if (current === "live") actionsRef.current.capture();
+        else if (current === "frozen") void actionsRef.current.analyze();
+        else if (current === "result") actionsRef.current.retake();
+        return;
+      }
+      if (key === "Escape" || key === "Backspace") {
+        event.preventDefault();
+        if (phaseRef.current !== "live") actionsRef.current.retake();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -634,11 +663,26 @@ export function AuraLabScreen({ navigation }: Props) {
             </LinearGradient>
           ) : (
             <View style={styles.hero}>
-              <Text style={[styles.heroTitle, stacked && styles.heroTitleStacked]}>
-                AURA
+              <Text
+                style={[
+                  styles.heroTitle,
+                  stacked && styles.heroTitleStacked,
+                  phase !== "live" && styles.heroTitlePhase,
+                  phase !== "live" && stacked && styles.heroTitlePhaseStacked,
+                ]}
+              >
+                {phase === "frozen"
+                  ? "LOCKED IN?"
+                  : phase === "analyzing"
+                    ? "READING…"
+                    : "AURA"}
               </Text>
               <Text style={styles.heroSubtitle}>
-                Step in front of the camera and let the aura do the talking.
+                {phase === "frozen"
+                  ? "This the one?"
+                  : phase === "analyzing"
+                    ? "Sitting with that energy. Don't look away."
+                    : "Aura Check. Camera ready."}
               </Text>
               <View style={styles.sourceRow}>
                 {(["phone", "webcam"] as const).map((s) => (
@@ -715,6 +759,8 @@ const styles = StyleSheet.create({
     letterSpacing: -4,
   },
   heroTitleStacked: { fontSize: 64, lineHeight: 62, letterSpacing: -2 },
+  heroTitlePhase: { fontSize: 72, lineHeight: 74, letterSpacing: -2 },
+  heroTitlePhaseStacked: { fontSize: 42, lineHeight: 44, letterSpacing: -1 },
   heroSubtitle: {
     color: COLORS.textMuted,
     fontSize: 18,
