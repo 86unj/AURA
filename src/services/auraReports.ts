@@ -2,6 +2,10 @@ import { FALLBACK_REPORTS } from "../data/fallbackAuraReports";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { AuraReport, SavedAuraReport } from "../types";
 
+export const AURA_PHOTOS_BUCKET = "aura-photos";
+/** Short-lived signed URL TTL for History + report screen photos. */
+const SIGNED_URL_TTL_SECONDS = 60 * 60;
+
 let fallbackReports = FALLBACK_REPORTS.map((report, index) =>
   toSavedReport(report, index),
 );
@@ -14,6 +18,7 @@ function toSavedReport(report: AuraReport, index: number): SavedAuraReport {
     id: `fallback-${index + 1}`,
     created_at: createdAt,
     is_favorite: index === 0,
+    photo_path: null,
   };
 }
 
@@ -46,6 +51,117 @@ function normalizeReports(payload: unknown): SavedAuraReport[] {
   return payload.filter(isSavedAuraReport);
 }
 
+async function requireUserId(): Promise<string> {
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+
+  if (error || !user) {
+    throw new Error("You must be signed in to save photos.");
+  }
+
+  return user.id;
+}
+
+/** Upload a local 640px JPEG to `<user_id>/<report_id>.jpg` and return the path. */
+export async function uploadAuraPhoto(
+  reportId: string,
+  photoUri: string,
+): Promise<string> {
+  const userId = await requireUserId();
+  const path = `${userId}/${reportId}.jpg`;
+
+  const response = await fetch(photoUri);
+  if (!response.ok) {
+    throw new Error("Could not read the photo file for upload.");
+  }
+
+  const blob = await response.blob();
+  const { error } = await supabase.storage
+    .from(AURA_PHOTOS_BUCKET)
+    .upload(path, blob, {
+      contentType: "image/jpeg",
+      upsert: true,
+    });
+
+  if (error) {
+    throw new Error(`Photo upload failed: ${error.message}`);
+  }
+
+  return path;
+}
+
+async function attachPhotoPath(
+  reportId: string,
+  photoPath: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from("aura_reports")
+    .update({ photo_path: photoPath })
+    .eq("id", reportId);
+
+  if (error) {
+    throw new Error(`Failed to store photo path: ${error.message}`);
+  }
+}
+
+/**
+ * Batch-create short-lived signed URLs for History (and similar lists).
+ * Returns a map of storage path → signed URL.
+ */
+export async function getSignedPhotoUrls(
+  photoPaths: Array<string | null | undefined>,
+): Promise<Record<string, string>> {
+  if (!isSupabaseConfigured) {
+    return {};
+  }
+
+  const unique = [
+    ...new Set(
+      photoPaths.filter((path): path is string => typeof path === "string" && path.length > 0),
+    ),
+  ];
+
+  if (unique.length === 0) {
+    return {};
+  }
+
+  const { data, error } = await supabase.storage
+    .from(AURA_PHOTOS_BUCKET)
+    .createSignedUrls(unique, SIGNED_URL_TTL_SECONDS);
+
+  if (error) {
+    console.warn("Signed photo URLs failed:", error);
+    return {};
+  }
+
+  const urls: Record<string, string> = {};
+  for (const entry of data ?? []) {
+    if (entry.path && entry.signedUrl && !entry.error) {
+      urls[entry.path] = entry.signedUrl;
+    }
+  }
+  return urls;
+}
+
+export async function getSignedPhotoUrl(
+  photoPath: string,
+): Promise<string | null> {
+  const urls = await getSignedPhotoUrls([photoPath]);
+  return urls[photoPath] ?? null;
+}
+
+async function removeAuraPhoto(photoPath: string): Promise<void> {
+  const { error } = await supabase.storage
+    .from(AURA_PHOTOS_BUCKET)
+    .remove([photoPath]);
+
+  if (error) {
+    console.warn("Photo delete failed:", error);
+  }
+}
+
 export async function getReports(): Promise<SavedAuraReport[]> {
   if (!isSupabaseConfigured) {
     return fallbackReports;
@@ -74,6 +190,7 @@ export function hasSaveEndpoint(): boolean {
 
 export async function saveAuraReport(
   report: AuraReport,
+  photoUri?: string,
 ): Promise<SavedAuraReport> {
   if (!isSupabaseConfigured) {
     throw new Error(
@@ -97,7 +214,18 @@ export async function saveAuraReport(
     throw new Error("Save succeeded but no report was returned.");
   }
 
-  return data;
+  if (!photoUri) {
+    return data;
+  }
+
+  try {
+    const photoPath = await uploadAuraPhoto(data.id, photoUri);
+    await attachPhotoPath(data.id, photoPath);
+    return { ...data, photo_path: photoPath };
+  } catch (photoError) {
+    console.warn("Report saved but photo upload failed:", photoError);
+    return data;
+  }
 }
 
 export async function deleteReport(reportId: string): Promise<void> {
@@ -106,6 +234,12 @@ export async function deleteReport(reportId: string): Promise<void> {
     return;
   }
 
+  const { data: existing } = await supabase
+    .from("aura_reports")
+    .select("photo_path")
+    .eq("id", reportId)
+    .maybeSingle();
+
   const { error } = await supabase
     .from("aura_reports")
     .delete()
@@ -113,6 +247,15 @@ export async function deleteReport(reportId: string): Promise<void> {
 
   if (error) {
     throw new Error(`Delete failed: ${error.message}`);
+  }
+
+  const photoPath =
+    existing && typeof existing.photo_path === "string"
+      ? existing.photo_path
+      : null;
+
+  if (photoPath) {
+    await removeAuraPhoto(photoPath);
   }
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import * as Haptics from "expo-haptics";
 import { useAudioPlayer, setAudioModeAsync } from "expo-audio";
 import { LinearGradient } from "expo-linear-gradient";
@@ -15,7 +15,12 @@ import { COLORS } from "../theme/game";
 // import { useAuth } from "../context/AuthContext";
 import { SAMPLE_AURA_REPORT } from "../data/sampleAuraReport";
 import { RootStackParamList } from "../navigation/types";
-import { deleteReport, hasSaveEndpoint, saveAuraReport } from "../services/auraReports";
+import {
+  deleteReport,
+  getSignedPhotoUrl,
+  hasSaveEndpoint,
+  saveAuraReport,
+} from "../services/auraReports";
 // import { evaluateAndUnlockBadges } from "../services/badges";
 // import { captureAndShare } from "../services/share";
 import { SavedAuraReport } from "../types";
@@ -25,6 +30,11 @@ type Props = NativeStackScreenProps<RootStackParamList, "AuraReport">;
 export function AuraReportScreen({ route, navigation }: Props) {
   const report = route.params?.report ?? SAMPLE_AURA_REPORT;
   const mode = route.params?.mode ?? "scan";
+  const localPhotoUri = route.params?.photoUri;
+  const photoPath =
+    route.params?.photoPath ??
+    (report as SavedAuraReport).photo_path ??
+    undefined;
   const auraTint = hexToRgba(report.aura_color, 0.22);
   const canSave = mode === "scan" && hasSaveEndpoint();
   const reportId = (report as SavedAuraReport).id;
@@ -33,6 +43,33 @@ export function AuraReportScreen({ route, navigation }: Props) {
 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [displayPhotoUri, setDisplayPhotoUri] = useState<string | undefined>(
+    localPhotoUri,
+  );
+
+  useEffect(() => {
+    if (localPhotoUri) {
+      setDisplayPhotoUri(localPhotoUri);
+      return;
+    }
+
+    if (!photoPath || typeof photoPath !== "string") {
+      setDisplayPhotoUri(undefined);
+      return;
+    }
+
+    let cancelled = false;
+
+    getSignedPhotoUrl(photoPath).then((url) => {
+      if (!cancelled && url) {
+        setDisplayPhotoUri(url);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [localPhotoUri, photoPath]);
 
   const playSparkle = useCallback(() => {
     setAudioModeAsync({ playsInSilentMode: false })
@@ -84,7 +121,7 @@ export function AuraReportScreen({ route, navigation }: Props) {
     setSaving(true);
 
     try {
-      await saveAuraReport(report);
+      await saveAuraReport(report, localPhotoUri);
       setSaved(true);
     } catch (error) {
       console.error("Save aura report failed:", error);
@@ -111,7 +148,7 @@ export function AuraReportScreen({ route, navigation }: Props) {
         <Text style={styles.backButtonText}>Back</Text>
       </Pressable>
 
-      <AuraReportView report={report} mode={mode}>
+      <AuraReportView report={report} mode={mode} photoUri={displayPhotoUri}>
         {canSave ? (
           <FadeSlideIn delay={480}>
             <GameButton

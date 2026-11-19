@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Notifications from "expo-notifications";
 
 import { AuraReport, DailyAuraRecord } from "../types";
+import { uploadAuraPhoto } from "./auraReports";
 import { supabase } from "./supabaseClient";
 
 const REMINDER_KEY = "aura:daily:reminder-enabled";
@@ -36,6 +37,7 @@ function rowToRecord(row: Record<string, unknown>): DailyAuraRecord {
     recommendation: row.recommendation as string,
     is_daily: true,
     date: row.scan_date as string,
+    photo_path: typeof row.photo_path === "string" ? row.photo_path : null,
   };
 }
 
@@ -50,7 +52,10 @@ export async function hasScannedToday(): Promise<boolean> {
   return data !== null;
 }
 
-export async function saveDailyReport(report: AuraReport): Promise<DailyAuraRecord> {
+export async function saveDailyReport(
+  report: AuraReport,
+  photoUri?: string,
+): Promise<DailyAuraRecord> {
   const today = getTodayKey();
   const { subject, aura_color, vibe_score, threat_level, traits, verdict, recommendation } = report;
   const { data, error } = await supabase
@@ -60,7 +65,30 @@ export async function saveDailyReport(report: AuraReport): Promise<DailyAuraReco
     .single();
 
   if (error) throw new Error(`Failed to save daily report: ${error.message}`);
-  return rowToRecord(data as Record<string, unknown>);
+
+  const saved = rowToRecord(data as Record<string, unknown>);
+
+  if (!photoUri) {
+    return saved;
+  }
+
+  try {
+    const photoPath = await uploadAuraPhoto(saved.id, photoUri);
+    const { error: pathError } = await supabase
+      .from("aura_reports")
+      .update({ photo_path: photoPath })
+      .eq("id", saved.id);
+
+    if (pathError) {
+      console.warn("Daily report saved but photo path update failed:", pathError);
+      return saved;
+    }
+
+    return { ...saved, photo_path: photoPath };
+  } catch (photoError) {
+    console.warn("Daily report saved but photo upload failed:", photoError);
+    return saved;
+  }
 }
 
 export async function getDailyHistory(): Promise<DailyAuraRecord[]> {
