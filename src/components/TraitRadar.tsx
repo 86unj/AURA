@@ -16,11 +16,20 @@ type Point = {
 };
 
 const LABEL_HEIGHT = 18;
+/** Put chart + scores in a row once the traits card is wide enough. */
+const SIDE_BY_SIDE_MIN = 400;
 
 export function TraitRadar({ traits, color }: TraitRadarProps) {
+  const [containerWidth, setContainerWidth] = useState(0);
   const [boxWidth, setBoxWidth] = useState(0);
+  const sideBySide = containerWidth >= SIDE_BY_SIDE_MIN;
 
-  function handleLayout(event: LayoutChangeEvent) {
+  function handleContainerLayout(event: LayoutChangeEvent) {
+    const nextWidth = Math.round(event.nativeEvent.layout.width);
+    setContainerWidth((current) => (current === nextWidth ? current : nextWidth));
+  }
+
+  function handleChartLayout(event: LayoutChangeEvent) {
     const nextWidth = Math.round(event.nativeEvent.layout.width);
     setBoxWidth((current) => (current === nextWidth ? current : nextWidth));
   }
@@ -32,7 +41,8 @@ export function TraitRadar({ traits, color }: TraitRadarProps) {
 
     const labelGutter = Math.min(78, Math.max(64, Math.round(boxWidth * 0.24)));
     const verticalGutter = 24;
-    const diameter = Math.max(120, boxWidth - labelGutter * 2);
+    // Cap so wide desktop panels (Aura Lab) don't grow a giant radar.
+    const diameter = Math.min(240, Math.max(120, boxWidth - labelGutter * 2));
     const radius = diameter / 2;
     const chartHeight = diameter + verticalGutter * 2;
     const centerX = boxWidth / 2;
@@ -106,10 +116,17 @@ export function TraitRadar({ traits, color }: TraitRadarProps) {
   }, [boxWidth, traits]);
 
   return (
-    <View style={styles.container}>
+    <View
+      style={[styles.container, sideBySide && styles.containerRow]}
+      onLayout={handleContainerLayout}
+    >
       <View
-        style={[styles.chartWrap, { height: chart?.chartHeight ?? 220 }]}
-        onLayout={handleLayout}
+        style={[
+          styles.chartWrap,
+          sideBySide && styles.chartWrapSide,
+          { height: chart?.chartHeight ?? 220 },
+        ]}
+        onLayout={handleChartLayout}
       >
         {chart ? (
           <>
@@ -179,7 +196,7 @@ export function TraitRadar({ traits, color }: TraitRadarProps) {
         ) : null}
       </View>
 
-      <View style={styles.legend}>
+      <View style={[styles.legend, sideBySide && styles.legendSide]}>
         {traits.map((trait) => (
           <View key={trait.label} style={styles.legendRow}>
             <Text style={styles.legendLabel}>{trait.label}</Text>
@@ -212,8 +229,18 @@ const styles = StyleSheet.create({
   container: {
     gap: 16,
   },
+  containerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 20,
+  },
   chartWrap: {
     width: "100%",
+  },
+  chartWrapSide: {
+    width: undefined,
+    flex: 1.15,
+    minWidth: 0,
   },
   chart: {
     position: "absolute",
@@ -230,6 +257,11 @@ const styles = StyleSheet.create({
   legend: {
     gap: 8,
   },
+  legendSide: {
+    flex: 1,
+    minWidth: 140,
+    justifyContent: "center",
+  },
   legendRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -240,12 +272,12 @@ const styles = StyleSheet.create({
   },
   legendLabel: {
     color: COLORS.text,
-    fontSize: 13,
+    fontSize: 16,
     fontWeight: "700",
   },
   legendValue: {
     color: COLORS.accentMuted,
-    fontSize: 13,
+    fontSize: 16,
     fontWeight: "800",
   },
 });

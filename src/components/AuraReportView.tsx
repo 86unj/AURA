@@ -1,5 +1,5 @@
 import { ReactNode, useEffect } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { Image, ScrollView, StyleSheet, Text, View } from "react-native";
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -54,6 +54,8 @@ export function hexToRgba(hexColor: string, alpha: number) {
 type Props = {
   report: AuraReport;
   mode?: "scan" | "saved";
+  /** Local file URI or short-lived signed URL for the scan photo. */
+  photoUri?: string | null;
   /** Top padding of the scroll content (the phone screen needs room for its back button). */
   paddingTop?: number;
   /** Rendered below the cards (save / delete / new scan buttons). */
@@ -61,7 +63,13 @@ type Props = {
 };
 
 /** Scrollable report cards, shared by the phone report screen and Aura Lab. */
-export function AuraReportView({ report, mode = "scan", paddingTop = 100, children }: Props) {
+export function AuraReportView({
+  report,
+  mode = "scan",
+  photoUri,
+  paddingTop = 100,
+  children,
+}: Props) {
   const rarity = getRarity(report.vibe_score);
 
   return (
@@ -77,6 +85,14 @@ export function AuraReportView({ report, mode = "scan", paddingTop = 100, childr
             </Text>
             {/* <ThreatBadge level={report.threat_level} /> */}
           </View>
+
+          {photoUri ? (
+            <Image
+              source={{ uri: photoUri }}
+              style={[styles.photo, { borderColor: `${report.aura_color}66` }]}
+              resizeMode="cover"
+            />
+          ) : null}
 
           <View style={styles.subjectBlock}>
             <Text style={styles.subjectText}>{report.subject}</Text>
@@ -147,6 +163,13 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     flexWrap: "wrap",
     gap: 8,
+  },
+  photo: {
+    width: "100%",
+    aspectRatio: 1,
+    borderRadius: 20,
+    borderWidth: 1,
+    backgroundColor: "rgba(255,255,255,0.04)",
   },
   rarityPill: {
     borderRadius: 999,
