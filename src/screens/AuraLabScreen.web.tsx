@@ -1,4 +1,4 @@
-import { CSSProperties, useEffect, useRef, useState } from "react";
+import { ComponentRef, CSSProperties, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -9,20 +9,39 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
+import Animated, {
+  Easing,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSequence,
+  withTiming,
+} from "react-native-reanimated";
 import type { ImageSegmenter, MPMask } from "@mediapipe/tasks-vision";
 
-import { COLORS } from "../theme/game";
+import { COLORS, getRarity } from "../theme/game";
 import { RootStackParamList } from "../navigation/types";
 import { analyzeAura } from "../services/analyzeAura";
 import { AuraRenderer, createAuraRenderer } from "../effects/auraRenderer";
-import { AuraReportView, hexToRgba } from "../components/AuraReportView";
+import { AuraCard } from "../components/AuraCard";
+import { AuraPaneGlow } from "../components/AuraPaneGlow";
+import { AuraReportView } from "../components/AuraReportView";
 import { GameButton } from "../components/GameButton";
 import { ScanningOverlay } from "../components/ScanningOverlay";
+import { ShareAuraModal } from "../components/ShareAuraModal.web";
 import { useAuth } from "../context/AuthContext";
+import {
+  createAuraShare,
+  CreatedAuraShare,
+  revokeAuraShare,
+} from "../services/auraShares";
+import { asHtmlElement, captureCardImageBlob } from "../services/captureCardImage";
 import { PhoneReceiver, ReceiverStatus, startPhoneReceiver } from "../services/phoneReceiver";
 import { AuraReport } from "../types";
+
+const IDLE_GLOW = "#A78BFA";
+const IDLE_GLOW_SECONDARY = "#7C6CFF";
 
 type Props = NativeStackScreenProps<RootStackParamList, "AuraLab">;
 
@@ -93,6 +112,27 @@ const SPLIT_MIN_WIDTH = 820;
 type Phase = "live" | "frozen" | "analyzing" | "result";
 type VideoSource = "phone" | "webcam";
 
+const PHASE_COPY: Record<
+  Exclude<Phase, "result">,
+  { title: string; subtitle: string; titleColor: string }
+> = {
+  live: {
+    title: "AURA",
+    subtitle: "Aura Check. Camera ready.",
+    titleColor: COLORS.text,
+  },
+  frozen: {
+    title: "LOCKED IN?",
+    subtitle: "This the one?",
+    titleColor: "#FDE68A",
+  },
+  analyzing: {
+    title: "READING…",
+    subtitle: "Sitting with that energy. Don't look away.",
+    titleColor: COLORS.accentMuted,
+  },
+};
+
 const PHONE_STATUS_TEXT: Record<ReceiverStatus, string> = {
   waiting: "Waiting for phone… open Remote camera on your phone (same account).",
   connecting: "Phone found, connecting…",
@@ -130,6 +170,12 @@ export function AuraLabScreen({ navigation }: Props) {
   const [sourceError, setSourceError] = useState("");
   const [result, setResult] = useState<AuraReport | null>(null);
   const [capturedUri, setCapturedUri] = useState<string | null>(null);
+  const cardCaptureRef = useRef<ComponentRef<typeof View> | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareCreating, setShareCreating] = useState(false);
+  const [shareDestroying, setShareDestroying] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const [activeShare, setActiveShare] = useState<CreatedAuraShare | null>(null);
   const receiverRef = useRef<PhoneReceiver | null>(null);
   // Always call the latest capture handlers from the phone control channel.
   const actionsRef = useRef({
@@ -142,6 +188,51 @@ export function AuraLabScreen({ navigation }: Props) {
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
   sourceRef.current = source;
+
+  // Title crossfade between capture phases.
+  const flashOpacity = useSharedValue(0);
+  const stageDim = useSharedValue(0);
+  const titleOpacity = useSharedValue(1);
+  const titleOffset = useSharedValue(0);
+  const [displayPhase, setDisplayPhase] = useState<Exclude<Phase, "result">>("live");
+
+  useEffect(() => {
+    // Result replaces the hero panel; keep the last pre-result copy until retake.
+    if (phase === "result") return;
+    if (phase === displayPhase) return;
+
+    titleOpacity.value = withTiming(0, { duration: 140 }, (finished) => {
+      if (!finished) return;
+      runOnJS(setDisplayPhase)(phase);
+      titleOffset.value = 14;
+      titleOpacity.value = withTiming(1, { duration: 260, easing: Easing.out(Easing.cubic) });
+      titleOffset.value = withTiming(0, { duration: 280, easing: Easing.out(Easing.cubic) });
+    });
+    titleOffset.value = withTiming(-10, { duration: 140 });
+  }, [displayPhase, phase, titleOffset, titleOpacity]);
+
+  const titleMotionStyle = useAnimatedStyle(() => ({
+    opacity: titleOpacity.value,
+    transform: [{ translateY: titleOffset.value }],
+  }));
+
+  useEffect(() => {
+    if (phase === "frozen") {
+      stageDim.value = withTiming(0.22, { duration: 280 });
+    } else if (phase === "analyzing") {
+      stageDim.value = withTiming(0.1, { duration: 240 });
+    } else {
+      stageDim.value = withTiming(0, { duration: 220 });
+    }
+  }, [phase, stageDim]);
+
+  const dimStyle = useAnimatedStyle(() => ({
+    opacity: stageDim.value,
+  }));
+
+  const flashStyle = useAnimatedStyle(() => ({
+    opacity: flashOpacity.value,
+  }));
 
   // Space advances the flow; Esc / Backspace retakes. Works even when the
   // audience screen is the one with the mouse focus elsewhere.
@@ -470,6 +561,10 @@ export function AuraLabScreen({ navigation }: Props) {
     frozenUri.current = snap.toDataURL("image/jpeg", 0.9);
     settings.current.frozenSource = snap;
     settings.current.frozen = true;
+    flashOpacity.value = withSequence(
+      withTiming(0.9, { duration: 50 }),
+      withTiming(0, { duration: 380, easing: Easing.out(Easing.cubic) }),
+    );
     setPhase("frozen");
     syncPhonePhase("frozen");
   }
@@ -509,11 +604,69 @@ export function AuraLabScreen({ navigation }: Props) {
     }
   }
 
+  async function handleShare() {
+    if (!result || shareCreating) {
+      return;
+    }
+
+    setShareOpen(true);
+    setShareCreating(true);
+    setShareError(null);
+    setActiveShare(null);
+
+    try {
+      // Let the offscreen card paint before rasterizing.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+      const host = asHtmlElement(cardCaptureRef.current);
+      if (!host) {
+        throw new Error("Card capture host was not ready.");
+      }
+
+      const imageBlob = await captureCardImageBlob(host);
+      const share = await createAuraShare({ report: result, imageBlob });
+      setActiveShare(share);
+    } catch (error) {
+      console.error("Share failed:", error);
+      setShareError(
+        error instanceof Error ? error.message : "Could not create a share link.",
+      );
+    } finally {
+      setShareCreating(false);
+    }
+  }
+
+  async function handleDestroyShare() {
+    if (!activeShare || shareDestroying) {
+      return;
+    }
+
+    setShareDestroying(true);
+    try {
+      await revokeAuraShare(activeShare.id);
+      setActiveShare(null);
+      setShareOpen(false);
+      setShareError(null);
+    } catch (error) {
+      console.error("Destroy share failed:", error);
+      setShareError(
+        error instanceof Error ? error.message : "Could not destroy this share link.",
+      );
+    } finally {
+      setShareDestroying(false);
+    }
+  }
+
   function handleRetake() {
     // Fresh idle glow after a finished scan; mid-flow retakes keep the same color.
     if (phase === "result") {
       auraColorRef.current = randomAuraColor(auraColorRef.current);
     }
+    flashOpacity.value = 0;
+    titleOpacity.value = 1;
+    titleOffset.value = 0;
+    setDisplayPhase("live");
     analyzeToken.current += 1;
     frozenFrame.current = null;
     frozenUri.current = null;
@@ -552,6 +705,7 @@ export function AuraLabScreen({ navigation }: Props) {
 
   const ready = loadState === "ready" && hasVideo;
   const showResult = phase === "result" && result !== null;
+  const copy = PHASE_COPY[displayPhase];
 
   function switchSource(next: VideoSource) {
     if (next === source) return;
@@ -560,6 +714,9 @@ export function AuraLabScreen({ navigation }: Props) {
   }
 
   const linkColor = hasVideo ? "#4ADE80" : phoneStatus === "error" ? "#F87171" : "#FBBF24";
+  const glowColor = showResult && result ? result.aura_color : IDLE_GLOW;
+  const glowSecondary =
+    showResult && result ? getRarity(result.vibe_score).color : IDLE_GLOW_SECONDARY;
 
   return (
     <SafeAreaView style={styles.shell}>
@@ -581,6 +738,15 @@ export function AuraLabScreen({ navigation }: Props) {
 
           <View style={[styles.stage, showResult && styles.hidden]}>
             <canvas ref={canvasRef} style={canvasStyle} />
+
+            <Animated.View
+              pointerEvents="none"
+              style={[styles.stageDim, dimStyle]}
+            />
+            <Animated.View
+              pointerEvents="none"
+              style={[styles.captureFlash, flashStyle]}
+            />
 
             {loadState === "loading" ? (
               <View style={styles.overlay}>
@@ -650,40 +816,43 @@ export function AuraLabScreen({ navigation }: Props) {
         </View>
 
         <View style={[styles.pane, styles.rightPane]}>
+          <AuraPaneGlow color={glowColor} secondaryColor={glowSecondary} />
           {showResult && result ? (
-            <LinearGradient
-              colors={[hexToRgba(result.aura_color, 0.22), COLORS.bg, COLORS.bg]}
-              start={{ x: 0.1, y: 0 }}
-              end={{ x: 0.9, y: 1 }}
-              style={styles.reportPanel}
-            >
+            <View style={styles.reportPanel}>
               <AuraReportView report={result} paddingTop={20}>
-                <GameButton label="Scan again" onPress={handleRetake} />
+                <View style={styles.resultActions}>
+                  <GameButton
+                    label="Share"
+                    onPress={handleShare}
+                    variant="secondary"
+                    loading={shareCreating}
+                    disabled={shareCreating}
+                    style={styles.resultActionBtn}
+                  />
+                  <GameButton
+                    label="Scan again"
+                    onPress={handleRetake}
+                    style={styles.resultActionBtn}
+                  />
+                </View>
               </AuraReportView>
-            </LinearGradient>
+            </View>
           ) : (
             <View style={styles.hero}>
-              <Text
-                style={[
-                  styles.heroTitle,
-                  stacked && styles.heroTitleStacked,
-                  phase !== "live" && styles.heroTitlePhase,
-                  phase !== "live" && stacked && styles.heroTitlePhaseStacked,
-                ]}
-              >
-                {phase === "frozen"
-                  ? "LOCKED IN?"
-                  : phase === "analyzing"
-                    ? "READING…"
-                    : "AURA"}
-              </Text>
-              <Text style={styles.heroSubtitle}>
-                {phase === "frozen"
-                  ? "This the one?"
-                  : phase === "analyzing"
-                    ? "Sitting with that energy. Don't look away."
-                    : "Aura Check. Camera ready."}
-              </Text>
+              <Animated.View style={[styles.heroCopy, titleMotionStyle]}>
+                <Text
+                  style={[
+                    styles.heroTitle,
+                    stacked && styles.heroTitleStacked,
+                    displayPhase !== "live" && styles.heroTitlePhase,
+                    displayPhase !== "live" && stacked && styles.heroTitlePhaseStacked,
+                    { color: copy.titleColor },
+                  ]}
+                >
+                  {copy.title}
+                </Text>
+                <Text style={styles.heroSubtitle}>{copy.subtitle}</Text>
+              </Animated.View>
               <View style={styles.sourceRow}>
                 {(["phone", "webcam"] as const).map((s) => (
                   <Pressable
@@ -717,6 +886,37 @@ export function AuraLabScreen({ navigation }: Props) {
       >
         <Ionicons name="chevron-back" size={24} color={COLORS.text} />
       </Pressable>
+
+      {/* Offscreen card used only for share rasterization (must stay painted). */}
+      {result ? (
+        <View
+          ref={cardCaptureRef}
+          pointerEvents="none"
+          collapsable={false}
+          style={styles.offscreenCard}
+        >
+          <AuraCard
+            report={result}
+            photoUri={capturedUri}
+            maxTraits={5}
+            animate={false}
+          />
+        </View>
+      ) : null}
+
+      <ShareAuraModal
+        visible={shareOpen}
+        share={activeShare}
+        creating={shareCreating}
+        destroying={shareDestroying}
+        errorText={shareError}
+        onClose={() => {
+          if (shareCreating || shareDestroying) return;
+          setShareOpen(false);
+          setShareError(null);
+        }}
+        onDestroy={handleDestroyShare}
+      />
     </SafeAreaView>
   );
 }
@@ -725,19 +925,29 @@ const styles = StyleSheet.create({
   shell: {
     flex: 1,
     backgroundColor: COLORS.bg,
+    position: "relative",
+    overflow: "hidden",
   },
   split: {
     flex: 1,
     flexDirection: "row",
     gap: 24,
-    padding: 24,
+    paddingVertical: 24,
+    paddingHorizontal: 48,
     // Room for the back button above the camera.
     paddingTop: 72,
   },
   splitStacked: { flexDirection: "column" },
   pane: { flex: 1, minHeight: 0, gap: 14 },
   leftPane: { justifyContent: "center" },
-  rightPane: { justifyContent: "center" },
+  rightPane: {
+    justifyContent: "center",
+    position: "relative",
+    overflow: "hidden",
+    backgroundColor: "transparent",
+    borderWidth: 0,
+    borderColor: "transparent",
+  },
   hidden: { display: "none" },
   backButton: {
     position: "absolute",
@@ -750,7 +960,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "rgba(15,17,26,0.6)",
   },
-  hero: { paddingHorizontal: 32, gap: 20, flex: 1, justifyContent: "center" },
+  heroCopy: { gap: 16, minHeight: 160, justifyContent: "center" },
   heroTitle: {
     color: COLORS.text,
     fontSize: 120,
@@ -785,12 +995,41 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
+  stageDim: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: "rgba(5, 7, 12, 1)",
+  },
+  captureFlash: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: "#FFFFFF",
+  },
   reportPanel: {
     flex: 1,
     borderRadius: 22,
     overflow: "hidden",
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    zIndex: 1,
+  },
+  hero: {
+    paddingHorizontal: 32,
+    gap: 20,
+    flex: 1,
+    justifyContent: "center",
+    zIndex: 1,
+  },
+  resultActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  resultActionBtn: {
+    flex: 1,
+  },
+  offscreenCard: {
+    position: "absolute",
+    left: -10000,
+    top: 0,
+    width: 360,
+    opacity: 1,
   },
   overlay: {
     position: "absolute",
