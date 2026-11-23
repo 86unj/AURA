@@ -21,11 +21,5 @@ export type RootStackParamList = {
   DailyAura: undefined;
   RemoteCamera: undefined;
   AuraLab: undefined;
-  AuraCardPreview:
-    | {
-        /** A real scan to preview. Without it the screen uses sample reports. */
-        report?: AuraReport;
-        photoUri?: string;
-      }
-    | undefined;
+  ProfileSettings: undefined;
 };

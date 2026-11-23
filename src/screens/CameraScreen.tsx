@@ -37,10 +37,7 @@ import { AppLogo } from "../components/AppLogo";
 import { MenuButton, MenuItem } from "../components/MenuButton";
 import { ScanningOverlay } from "../components/ScanningOverlay";
 import { COLORS } from "../theme/game";
-// import { ProfileAvatar } from "../components/ProfileAvatar";
 import { useAuth } from "../context/AuthContext";
-// import { useBadgeUnlock } from "../context/BadgeUnlockContext";
-// import { useProfile } from "../context/ProfileContext";
 import { RootStackParamList } from "../navigation/types";
 import { analyzeAura } from "../services/analyzeAura";
 // import { evaluateAndUnlockBadges } from "../services/badges";
@@ -134,8 +131,6 @@ function AnalyzeAuraButton({ onPress }: { onPress: () => void }) {
 
 export function CameraScreen({ navigation, route }: Props) {
   const { user } = useAuth();
-  // const { profile } = useProfile();
-  // const { showUnlocks } = useBadgeUnlock();
   const cameraRef = useRef<CameraView | null>(null);
   const [permission, requestPermission] = useCameraPermissions();
   const [capturedUri, setCapturedUri] = useState<string | null>(null);
@@ -252,7 +247,7 @@ export function CameraScreen({ navigation, route }: Props) {
 
       const report = await analyzeAura(resizedPhoto.base64);
       if (dailyMode) {
-        await saveDailyReport(report);
+        await saveDailyReport(report, resizedPhoto.uri);
         // const unlocked = await evaluateAndUnlockBadges({
         //   userId: user.id,
         //   report,
@@ -271,7 +266,11 @@ export function CameraScreen({ navigation, route }: Props) {
         // if (unlocked.length > 0) {
         //   showUnlocks(unlocked);
         // }
-        navigation.navigate("AuraReport", { report });
+        // Pass the local JPEG path — not base64 (too large for nav params).
+        navigation.navigate("AuraReport", {
+          report,
+          photoUri: resizedPhoto.uri,
+        });
       }
       setCapturedUri(null);
       setCameraReady(false);
@@ -301,13 +300,6 @@ export function CameraScreen({ navigation, route }: Props) {
   function handleToggleFacing() {
     setFacing((current) => (current === "back" ? "front" : "back"));
   }
-
-  // function handleOpenProfile() {
-  //   if (isBusy || !user) {
-  //     return;
-  //   }
-  //   navigation.navigate("Profile");
-  // }
 
   function handleOpenSettings() {
     Linking.openSettings().catch(() => {
@@ -353,6 +345,12 @@ export function CameraScreen({ navigation, route }: Props) {
           },
         ]
       : []),
+    {
+      key: "profile",
+      label: "Profile settings",
+      icon: "person-outline",
+      onPress: () => navigation.navigate("ProfileSettings"),
+    },
   ];
 
   if (!permission) {

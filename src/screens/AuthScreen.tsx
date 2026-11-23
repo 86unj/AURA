@@ -17,7 +17,7 @@ import { AppLogo } from "../components/AppLogo";
 import { useAuth } from "../context/AuthContext";
 
 export function AuthScreen() {
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp, requestPasswordReset } = useAuth();
   const [mode, setMode] = useState<"signIn" | "signUp">("signIn");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -58,6 +58,33 @@ export function AuthScreen() {
     }
   }
 
+  async function handleForgotPassword() {
+    if (submitting) {
+      return;
+    }
+
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      Alert.alert("Email needed", "Enter your account email, then try again.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const { error } = await requestPasswordReset(trimmedEmail);
+      if (error) {
+        Alert.alert("Reset unavailable", error);
+        return;
+      }
+      Alert.alert(
+        "Check your email",
+        "If an account exists for that address, a password reset link is on the way.",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <LinearGradient
       colors={["rgba(123, 108, 246, 0.18)", "#090D16", "#05070C"]}
@@ -72,8 +99,8 @@ export function AuthScreen() {
         >
           <View style={styles.card}>
             <View style={styles.brandLockup}>
-              <AppLogo size={88} />
-              <Text style={styles.brand}>AURA</Text>
+              {/* <AppLogo size={88} />
+              <Text style={styles.brand}>AURA</Text> */}
             </View>
             <Text style={styles.title}>
               {isSignUp ? "Create your account" : "Welcome back"}
@@ -131,6 +158,16 @@ export function AuthScreen() {
                 </Text>
               )}
             </Pressable>
+
+            {!isSignUp ? (
+              <Pressable
+                style={styles.switchModeButton}
+                onPress={handleForgotPassword}
+                disabled={submitting}
+              >
+                <Text style={styles.forgotText}>Forgot password?</Text>
+              </Pressable>
+            ) : null}
 
             <Pressable
               style={styles.switchModeButton}
@@ -244,5 +281,10 @@ const styles = StyleSheet.create({
     color: "#E9D5FF",
     fontSize: 13,
     fontWeight: "800",
+  },
+  forgotText: {
+    color: "#94A3B8",
+    fontSize: 13,
+    fontWeight: "700",
   },
 });
