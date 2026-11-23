@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="dark" />
+    <title>Try Aura</title>
+    <meta
+      name="description"
+      content="Scan anything. Get a deadpan AI aura reading. Free demo powered by OpenRouter."
+    />
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #05070c;
+        --text: #f8fafc;
+        --muted: #94a3b8;
+        --accent: #e9d5ff;
+        --border: rgba(255, 255, 255, 0.1);
+        --surface: rgba(255, 255, 255, 0.05);
+        --danger: #fda4af;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: radial-gradient(ellipse at 50% 0%, #1a1030 0%, var(--bg) 55%);
+        color: var(--text);
+        font-family: Georgia, "Times New Roman", serif;
+      }
+
+      body {
+        min-height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 28px 16px calc(28px + env(safe-area-inset-bottom));
+      }
+
+      .shell {
+        width: min(100%, 440px);
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .brand {
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.28em;
+        color: var(--muted);
+        text-transform: uppercase;
+        text-align: center;
+      }
+
+      h1 {
+        margin: 0;
+        text-align: center;
+        font-size: 1.85rem;
+        font-weight: 400;
+        letter-spacing: 0.02em;
+      }
+
+      .lede {
+        margin: 0;
+        text-align: center;
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 0.95rem;
+        line-height: 1.45;
+        color: var(--muted);
+      }
+
+      .panel {
+        border: 1px solid var(--border);
+        background: var(--surface);
+        border-radius: 22px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .preview {
+        width: 100%;
+        aspect-ratio: 3 / 4;
+        border-radius: 16px;
+        overflow: hidden;
+        background: rgba(0, 0, 0, 0.35);
+        border: 1px dashed rgba(255, 255, 255, 0.18);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+      }
+
+      .preview img,
+      .preview video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+
+      .preview-empty {
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 0.9rem;
+        color: var(--muted);
+        text-align: center;
+        padding: 16px;
+      }
+
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .btn {
+        appearance: none;
+        border: none;
+        border-radius: 16px;
+        min-height: 48px;
+        padding: 0 18px;
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 15px;
+        font-weight: 800;
+        letter-spacing: 0.03em;
+        cursor: pointer;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 1 1 140px;
+      }
+
+      .btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      .btn-primary {
+        background: var(--accent);
+        color: var(--bg);
+      }
+
+      .btn-ghost {
+        background: transparent;
+        color: var(--text);
+        border: 1px solid var(--border);
+      }
+
+      .hidden {
+        display: none !important;
+      }
+
+      label {
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      input[type="password"],
+      input[type="text"] {
+        width: 100%;
+        border-radius: 14px;
+        border: 1px solid var(--border);
+        background: rgba(0, 0, 0, 0.35);
+        color: var(--text);
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 15px;
+        padding: 12px 14px;
+      }
+
+      .hint,
+      .status,
+      .note {
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 13px;
+        line-height: 1.4;
+        color: var(--muted);
+        margin: 0;
+      }
+
+      .status.error {
+        color: var(--danger);
+      }
+
+      .status a,
+      .note a {
+        color: var(--accent);
+      }
+
+      .spinner {
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        border: 2px solid rgba(255, 255, 255, 0.15);
+        border-top-color: var(--accent);
+        animation: spin 0.8s linear infinite;
+        display: inline-block;
+        vertical-align: middle;
+        margin-right: 8px;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .result {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .result-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .swatch {
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        flex-shrink: 0;
+      }
+
+      .subject {
+        margin: 0;
+        font-size: 1.25rem;
+        line-height: 1.3;
+      }
+
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .traits {
+        display: grid;
+        gap: 8px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .trait {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 14px;
+      }
+
+      .bar {
+        grid-column: 1 / -1;
+        height: 6px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        overflow: hidden;
+      }
+
+      .bar > span {
+        display: block;
+        height: 100%;
+        background: var(--accent);
+      }
+
+      .verdict,
+      .recommendation {
+        margin: 0;
+        font-size: 1rem;
+        line-height: 1.45;
+      }
+
+      .recommendation {
+        color: var(--muted);
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 0.92rem;
+      }
+    </style>
+    <script src="./try-config.js"></script>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="brand">Aura</div>
+      <h1>Try a live scan</h1>
+      <p class="lede">
+        Upload a photo or use your camera. Free demo via OpenRouter — if the
+        shared key is busy, paste your own.
+      </p>
+
+      <div class="panel">
+        <div class="preview" id="preview">
+          <div class="preview-empty" id="previewEmpty">
+            Drop in a face, object, or scene.
+          </div>
+          <img id="previewImage" class="hidden" alt="Selected photo" />
+          <video id="previewVideo" class="hidden" playsinline muted></video>
+        </div>
+
+        <div class="row">
+          <label class="btn btn-ghost" for="fileInput">Upload</label>
+          <input
+            id="fileInput"
+            type="file"
+            accept="image/*"
+            capture="environment"
+            class="hidden"
+          />
+          <button type="button" class="btn btn-ghost" id="cameraBtn">
+            Camera
+          </button>
+          <button type="button" class="btn btn-primary" id="scanBtn" disabled>
+            Scan
+          </button>
+        </div>
+
+        <div id="byokPanel" class="hidden">
+          <label for="apiKeyInput">OpenRouter API key</label>
+          <input
+            id="apiKeyInput"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="sk-or-..."
+          />
+          <p class="hint">
+            Demo unavailable right now. Paste your key to continue — stored only
+            in this browser tab.
+            <a id="keysLink" href="https://openrouter.ai/keys" target="_blank" rel="noreferrer"
+              >Get a key</a
+            >
+          </p>
+        </div>
+
+        <p class="status" id="status" aria-live="polite"></p>
+      </div>
+
+      <div class="panel result hidden" id="resultPanel">
+        <div class="result-head">
+          <p class="subject" id="subject"></p>
+          <div class="swatch" id="swatch" aria-hidden="true"></div>
+        </div>
+        <div class="meta">
+          <span id="vibe"></span>
+          <span id="threat"></span>
+          <span id="source"></span>
+        </div>
+        <ul class="traits" id="traits"></ul>
+        <p class="verdict" id="verdict"></p>
+        <p class="recommendation" id="recommendation"></p>
+        <button type="button" class="btn btn-ghost" id="againBtn">
+          Scan another
+        </button>
+      </div>
+
+      <p class="note">
+        Free OpenRouter models are rate-limited. Your photo is sent only to the
+        Aura analyzer for this scan.
+      </p>
+    </div>
+
+    <script>
+      (function () {
+        const KEY_STORAGE = "aura_try_openrouter_key";
+        const MAX_WIDTH = 640;
+        const JPEG_QUALITY = 0.72;
+
+        const config = window.AURA_TRY_CONFIG || {};
+        const fileInput = document.getElementById("fileInput");
+        const cameraBtn = document.getElementById("cameraBtn");
+        const scanBtn = document.getElementById("scanBtn");
+        const againBtn = document.getElementById("againBtn");
+        const previewEmpty = document.getElementById("previewEmpty");
+        const previewImage = document.getElementById("previewImage");
+        const previewVideo = document.getElementById("previewVideo");
+        const byokPanel = document.getElementById("byokPanel");
+        const apiKeyInput = document.getElementById("apiKeyInput");
+        const keysLink = document.getElementById("keysLink");
+        const statusEl = document.getElementById("status");
+        const resultPanel = document.getElementById("resultPanel");
+
+        let imageBase64 = "";
+        let cameraStream = null;
+        let busy = false;
+
+        if (config.openrouterKeysUrl) {
+          keysLink.href = config.openrouterKeysUrl;
+        }
+
+        const savedKey = sessionStorage.getItem(KEY_STORAGE) || "";
+        if (savedKey) {
+          apiKeyInput.value = savedKey;
+          byokPanel.classList.remove("hidden");
+        }
+
+        function setStatus(message, isError) {
+          statusEl.textContent = message || "";
+          statusEl.classList.toggle("error", Boolean(isError));
+        }
+
+        function stopCamera() {
+          if (!cameraStream) return;
+          cameraStream.getTracks().forEach(function (track) {
+            track.stop();
+          });
+          cameraStream = null;
+          previewVideo.srcObject = null;
+          previewVideo.classList.add("hidden");
+        }
+
+        function showPreviewFromDataUrl(dataUrl) {
+          stopCamera();
+          previewEmpty.classList.add("hidden");
+          previewImage.classList.remove("hidden");
+          previewImage.src = dataUrl;
+          scanBtn.disabled = !imageBase64 || busy;
+        }
+
+        function clearResult() {
+          resultPanel.classList.add("hidden");
+        }
+
+        function showByok(reason) {
+          byokPanel.classList.remove("hidden");
+          const hint =
+            reason === "rate_limited"
+              ? "Free demo hit its limit."
+              : reason === "invalid_key"
+                ? "That key was rejected."
+                : reason === "missing_key"
+                  ? "No demo key is configured."
+                  : "Live analysis failed.";
+          setStatus(
+            hint + " Paste your OpenRouter API key and scan again.",
+            true,
+          );
+        }
+
+        function resizeToJpegBase64(fileOrBlob) {
+          return new Promise(function (resolve, reject) {
+            const url = URL.createObjectURL(fileOrBlob);
+            const img = new Image();
+            img.onload = function () {
+              try {
+                const scale = Math.min(1, MAX_WIDTH / img.width);
+                const width = Math.max(1, Math.round(img.width * scale));
+                const height = Math.max(1, Math.round(img.height * scale));
+                const canvas = document.createElement("canvas");
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext("2d");
+                if (!ctx) throw new Error("Canvas unavailable");
+                ctx.drawImage(img, 0, 0, width, height);
+                const dataUrl = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
+                const base64 = dataUrl.split(",")[1] || "";
+                URL.revokeObjectURL(url);
+                resolve({ dataUrl: dataUrl, base64: base64 });
+              } catch (err) {
+                URL.revokeObjectURL(url);
+                reject(err);
+              }
+            };
+            img.onerror = function () {
+              URL.revokeObjectURL(url);
+              reject(new Error("Could not read image"));
+            };
+            img.src = url;
+          });
+        }
+
+        async function captureFromVideo() {
+          if (!previewVideo.srcObject) return;
+          const canvas = document.createElement("canvas");
+          const width = previewVideo.videoWidth || 640;
+          const height = previewVideo.videoHeight || 480;
+          const scale = Math.min(1, MAX_WIDTH / width);
+          canvas.width = Math.max(1, Math.round(width * scale));
+          canvas.height = Math.max(1, Math.round(height * scale));
+          const ctx = canvas.getContext("2d");
+          if (!ctx) throw new Error("Canvas unavailable");
+          ctx.drawImage(previewVideo, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
+          imageBase64 = dataUrl.split(",")[1] || "";
+          showPreviewFromDataUrl(dataUrl);
+        }
+
+        function renderReport(report, source) {
+          document.getElementById("subject").textContent = report.subject;
+          document.getElementById("swatch").style.background =
+            report.aura_color || "#7B6CF6";
+          document.getElementById("vibe").textContent =
+            "Vibe " + Math.round(report.vibe_score);
+          document.getElementById("threat").textContent =
+            "Threat " + (report.threat_level || "—");
+          document.getElementById("source").textContent =
+            source === "openrouter_byok" ? "Your key" : "Free demo";
+          document.getElementById("verdict").textContent = report.verdict;
+          document.getElementById("recommendation").textContent =
+            report.recommendation;
+
+          const traits = document.getElementById("traits");
+          traits.innerHTML = "";
+          (report.traits || []).forEach(function (trait) {
+            const li = document.createElement("li");
+            li.className = "trait";
+            const label = document.createElement("span");
+            label.textContent = trait.label;
+            const value = document.createElement("span");
+            value.textContent = String(Math.round(trait.value));
+            const bar = document.createElement("div");
+            bar.className = "bar";
+            const fill = document.createElement("span");
+            fill.style.width =
+              Math.max(0, Math.min(100, Number(trait.value) || 0)) + "%";
+            bar.appendChild(fill);
+            li.appendChild(label);
+            li.appendChild(value);
+            li.appendChild(bar);
+            traits.appendChild(li);
+          });
+
+          resultPanel.classList.remove("hidden");
+        }
+
+        async function analyze() {
+          if (busy) return;
+          if (!config.analyzeUrl || !config.supabaseAnonKey) {
+            setStatus("Try page config is missing.", true);
+            return;
+          }
+
+          if (cameraStream && !imageBase64) {
+            try {
+              await captureFromVideo();
+            } catch (err) {
+              setStatus("Could not capture from camera.", true);
+              return;
+            }
+          }
+
+          if (!imageBase64) {
+            setStatus("Choose a photo first.", true);
+            return;
+          }
+
+          const visitorKey = (apiKeyInput.value || "").trim();
+          if (visitorKey) {
+            sessionStorage.setItem(KEY_STORAGE, visitorKey);
+          }
+
+          busy = true;
+          scanBtn.disabled = true;
+          clearResult();
+          setStatus("");
+          statusEl.innerHTML =
+            '<span class="spinner" aria-hidden="true"></span>Reading aura…';
+
+          const payload = { imageBase64: imageBase64 };
+          if (visitorKey) payload.openrouterApiKey = visitorKey;
+
+          try {
+            const res = await fetch(config.analyzeUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                apikey: config.supabaseAnonKey,
+                Authorization: "Bearer " + config.supabaseAnonKey,
+              },
+              body: JSON.stringify(payload),
+            });
+
+            const data = await res.json().catch(function () {
+              return {};
+            });
+
+            if (data && data.error === "needs_byok") {
+              showByok(data.reason || "provider_error");
+              return;
+            }
+
+            if (!res.ok || !data || !data.report) {
+              showByok("provider_error");
+              return;
+            }
+
+            setStatus("");
+            renderReport(data.report, data.source || "openrouter");
+          } catch (err) {
+            showByok("provider_error");
+          } finally {
+            busy = false;
+            scanBtn.disabled = !imageBase64;
+          }
+        }
+
+        fileInput.addEventListener("change", async function () {
+          const file = fileInput.files && fileInput.files[0];
+          if (!file) return;
+          clearResult();
+          setStatus("Preparing image…");
+          try {
+            const prepared = await resizeToJpegBase64(file);
+            imageBase64 = prepared.base64;
+            showPreviewFromDataUrl(prepared.dataUrl);
+            setStatus("");
+          } catch (err) {
+            setStatus("Could not read that image.", true);
+          } finally {
+            fileInput.value = "";
+          }
+        });
+
+        cameraBtn.addEventListener("click", async function () {
+          clearResult();
+          setStatus("");
+          try {
+            stopCamera();
+            cameraStream = await navigator.mediaDevices.getUserMedia({
+              audio: false,
+              video: { facingMode: { ideal: "environment" } },
+            });
+            previewEmpty.classList.add("hidden");
+            previewImage.classList.add("hidden");
+            previewVideo.classList.remove("hidden");
+            previewVideo.srcObject = cameraStream;
+            await previewVideo.play();
+            imageBase64 = "";
+            scanBtn.disabled = false;
+            setStatus("Camera ready — tap Scan to capture.");
+          } catch (err) {
+            setStatus("Camera permission denied or unavailable.", true);
+          }
+        });
+
+        scanBtn.addEventListener("click", function () {
+          analyze();
+        });
+
+        againBtn.addEventListener("click", function () {
+          clearResult();
+          setStatus("");
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        });
+      })();
+    </script>
+  </body>
+</html>
