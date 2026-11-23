@@ -12,6 +12,7 @@ import { RemoteCameraScreen } from "./src/screens/RemoteCameraScreen";
 import { AuraLabScreen } from "./src/screens/AuraLabScreen";
 import { AuthProvider, useAuth } from "./src/context/AuthContext";
 import { RootStackParamList } from "./src/navigation/types";
+import { ProfileSettingsScreen } from "./src/screens/ProfileSettingsScreen";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -47,6 +48,7 @@ function RootNavigator() {
           <Stack.Screen name="DailyAura" component={DailyAuraScreen} />
           <Stack.Screen name="RemoteCamera" component={RemoteCameraScreen} />
           <Stack.Screen name="AuraLab" component={AuraLabScreen} />
+          <Stack.Screen name="ProfileSettings" component={ProfileSettingsScreen} />
         </>
       ) : (
         <Stack.Screen name="Auth" component={AuthScreen} />
