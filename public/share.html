@@ -173,9 +173,9 @@
         <div class="card-frame">
           <img id="cardImage" alt="Shared aura card" />
         </div>
-        <div class="actions">
+        <!-- <div class="actions">
           <a id="downloadBtn" class="btn btn-primary" href="#" download="aura-card.png">Download</a>
-        </div>
+        </div> -->
         <p class="note">Link expires 24 hours after it was created.</p>
       </div>
     </div>
@@ -195,13 +195,18 @@
         }
 
         function showLive(imageUrl) {
+          cardImage.onload = function () {
+            loading.classList.add("hidden");
+            expired.classList.add("hidden");
+            live.classList.remove("hidden");
+            // flex helper was overridden by .hidden; restore layout
+            live.style.display = "flex";
+          };
+          cardImage.onerror = function () {
+            showExpired();
+          };
           cardImage.src = imageUrl;
           downloadBtn.href = imageUrl;
-          loading.classList.add("hidden");
-          expired.classList.add("hidden");
-          live.classList.remove("hidden");
-          // flex helper was overridden by .hidden; restore layout
-          live.style.display = "flex";
         }
 
         const params = new URLSearchParams(window.location.search);

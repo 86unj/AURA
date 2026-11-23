@@ -127,21 +127,6 @@ function MiniBar({ trait, color, delay }: MiniBarProps) {
   );
 }
 
-function PhotoHalo({ color, id }: { color: string; id: string }) {
-  // Transparent center, aura color at the edges: reads as a glow around the subject.
-  return (
-    <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
-      <Defs>
-        <RadialGradient id={id} cx="50%" cy="55%" r="70%">
-          <Stop offset="45%" stopColor={color} stopOpacity={0} />
-          <Stop offset="100%" stopColor={color} stopOpacity={0.75} />
-        </RadialGradient>
-      </Defs>
-      <Rect width="100%" height="100%" fill={`url(#${id})`} />
-    </Svg>
-  );
-}
-
 function OrbPlaceholder({ color, id }: { color: string; id: string }) {
   return (
     <View style={styles.orbPlaceholder}>
@@ -255,8 +240,12 @@ export function AuraCard({
     setCardWidth(event.nativeEvent.layout.width);
   }
 
+  // Plain View when not animating — Reanimated perspective/transform breaks
+  // html-to-image (SVG foreignObject) and produces solid blank PNGs.
+  const Root = animate ? Animated.View : View;
+
   return (
-    <Animated.View style={[styles.wrap, enterStyle]} onLayout={handleLayout}>
+    <Root style={[styles.wrap, animate ? enterStyle : null]} onLayout={handleLayout}>
       {/* Outer glow in the aura color */}
       <View
         pointerEvents="none"
@@ -282,10 +271,7 @@ export function AuraCard({
           {/* Photo or orb */}
           <View style={[styles.photoFrame, { borderColor: hexToRgba(rarity.color, 0.45) }]}>
             {photoUri ? (
-              <>
-                <Image source={{ uri: photoUri }} style={styles.photo} resizeMode="cover" />
-                <PhotoHalo color={report.aura_color} id={`cardHalo${idSuffix}`} />
-              </>
+              <Image source={{ uri: photoUri }} style={styles.photo} resizeMode="cover" />
             ) : (
               <OrbPlaceholder color={report.aura_color} id={`cardOrb${idSuffix}`} />
             )}
@@ -354,19 +340,21 @@ export function AuraCard({
           </View>
         </LinearGradient>
 
-        {/* Moving foil shine */}
-        <View pointerEvents="none" style={styles.sheenClip}>
-          <Animated.View style={[styles.sheen, { width: sheenWidth, opacity: sheenOpacity }, sheenStyle]}>
-            <LinearGradient
-              colors={["rgba(255,255,255,0)", "#FFFFFF", "rgba(255,255,255,0)"]}
-              start={{ x: 0, y: 0.5 }}
-              end={{ x: 1, y: 0.5 }}
-              style={StyleSheet.absoluteFill}
-            />
-          </Animated.View>
-        </View>
+        {/* Moving foil shine (skip animated sheen during static capture). */}
+        {animate && sheenOpacity > 0 ? (
+          <View pointerEvents="none" style={styles.sheenClip}>
+            <Animated.View style={[styles.sheen, { width: sheenWidth, opacity: sheenOpacity }, sheenStyle]}>
+              <LinearGradient
+                colors={["rgba(255,255,255,0)", "#FFFFFF", "rgba(255,255,255,0)"]}
+                start={{ x: 0, y: 0.5 }}
+                end={{ x: 1, y: 0.5 }}
+                style={StyleSheet.absoluteFill}
+              />
+            </Animated.View>
+          </View>
+        ) : null}
       </LinearGradient>
-    </Animated.View>
+    </Root>
   );
 }
 

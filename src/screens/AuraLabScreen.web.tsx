@@ -887,20 +887,23 @@ export function AuraLabScreen({ navigation }: Props) {
         <Ionicons name="chevron-back" size={24} color={COLORS.text} />
       </Pressable>
 
-      {/* Offscreen card used only for share rasterization (must stay painted). */}
+      {/* Offscreen card used only for share rasterization (must stay painted).
+          Capture the INNER host — not the offscreen wrapper — so html-to-image
+          does not clone left:-10000 onto the SVG and produce a blank PNG. */}
       {result ? (
-        <View
-          ref={cardCaptureRef}
-          pointerEvents="none"
-          collapsable={false}
-          style={styles.offscreenCard}
-        >
-          <AuraCard
-            report={result}
-            photoUri={capturedUri}
-            maxTraits={5}
-            animate={false}
-          />
+        <View pointerEvents="none" style={styles.offscreenCard}>
+          <View
+            ref={cardCaptureRef}
+            collapsable={false}
+            style={styles.cardCaptureHost}
+          >
+            <AuraCard
+              report={result}
+              photoUri={capturedUri}
+              maxTraits={5}
+              animate={false}
+            />
+          </View>
         </View>
       ) : null}
 
@@ -1029,7 +1032,10 @@ const styles = StyleSheet.create({
     left: -10000,
     top: 0,
     width: 360,
-    opacity: 1,
+  },
+  cardCaptureHost: {
+    width: 360,
+    backgroundColor: "#05070C",
   },
   overlay: {
     position: "absolute",
