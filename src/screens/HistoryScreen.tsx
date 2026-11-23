@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
   Pressable,
   StyleSheet,
   Text,
@@ -15,9 +16,13 @@ import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 
 import { AuraGauge } from "../components/AuraGauge";
-import { ThreatBadge } from "../components/ThreatBadge";
 import { RootStackParamList } from "../navigation/types";
-import { deleteReport, getReports, toggleFavorite } from "../services/auraReports";
+import {
+  deleteReport,
+  getReports,
+  getSignedPhotoUrls,
+  toggleFavorite,
+} from "../services/auraReports";
 import { SavedAuraReport } from "../types";
 
 type Props = NativeStackScreenProps<RootStackParamList, "History">;
@@ -40,6 +45,7 @@ function formatDate(value: string) {
 export function HistoryScreen({ navigation }: Props) {
   const { width } = useWindowDimensions();
   const [reports, setReports] = useState<SavedAuraReport[]>([]);
+  const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [showFavorites, setShowFavorites] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
@@ -65,7 +71,11 @@ export function HistoryScreen({ navigation }: Props) {
     setIsLoading(true);
 
     try {
-      setReports(await getReports());
+      const nextReports = await getReports();
+      setReports(nextReports);
+      setPhotoUrls(
+        await getSignedPhotoUrls(nextReports.map((report) => report.photo_path)),
+      );
     } catch (error) {
       console.error("History load failed:", error);
       Alert.alert("History unavailable", "Saved aura reports could not load.");
@@ -137,6 +147,11 @@ export function HistoryScreen({ navigation }: Props) {
   }
 
   function renderReport({ item }: { item: SavedAuraReport }) {
+    const photoUri =
+      item.photo_path && photoUrls[item.photo_path]
+        ? photoUrls[item.photo_path]
+        : undefined;
+
     return (
       <Pressable
         style={({ pressed }) => [
@@ -146,12 +161,27 @@ export function HistoryScreen({ navigation }: Props) {
           pressed && styles.cardPressed,
         ]}
         onPress={() =>
-          navigation.navigate("AuraReport", { report: item, mode: "saved" })
+          navigation.navigate("AuraReport", {
+            report: item,
+            mode: "saved",
+            photoPath: item.photo_path ?? undefined,
+          })
         }
         onLongPress={() => handleDelete(item)}
         delayLongPress={500}
       >
         <View style={styles.cardTopRow}>
+          {photoUri ? (
+            <Image
+              source={{ uri: photoUri }}
+              style={[
+                styles.thumb,
+                isGrid && styles.gridThumb,
+                { borderColor: `${item.aura_color}66` },
+              ]}
+              resizeMode="cover"
+            />
+          ) : null}
           <View style={styles.subjectBlock}>
             <Text style={styles.savedDate}>{formatDate(item.created_at)}</Text>
             <Text
@@ -191,7 +221,6 @@ export function HistoryScreen({ navigation }: Props) {
             size={isGrid ? 118 : 138}
           />
           <View style={styles.metaColumn}>
-            {/* <ThreatBadge level={item.threat_level} /> */}
             <View style={styles.colorRow}>
               <View
                 style={[
@@ -217,8 +246,13 @@ export function HistoryScreen({ navigation }: Props) {
     <SafeAreaView style={styles.screenShell}>
       <View style={styles.header}>
         <View style={styles.headerTop}>
-          <Pressable style={styles.backButton} onPress={() => navigation.goBack()}>
-            <Text style={styles.backButtonText}>Back</Text>
+          <Pressable
+            style={styles.backButton}
+            onPress={() => navigation.goBack()}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <Ionicons name="chevron-back" size={22} color="#F8FAFC" />
           </Pressable>
           <View style={styles.headerTitleBlock}>
             <Text style={styles.kicker}>AURA ARCHIVE</Text>
@@ -375,18 +409,14 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   backButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    width: 40,
+    height: 40,
     borderRadius: 999,
     backgroundColor: "rgba(255,255,255,0.06)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.10)",
-  },
-  backButtonText: {
-    color: "#F8FAFC",
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 1.2,
+    alignItems: "center",
+    justifyContent: "center",
   },
   dailyButton: {
     paddingHorizontal: 12,
@@ -515,6 +545,18 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 10,
+  },
+  thumb: {
+    width: 56,
+    height: 56,
+    borderRadius: 14,
+    borderWidth: 1,
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  gridThumb: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
   },
   subjectBlock: {
     flex: 1,

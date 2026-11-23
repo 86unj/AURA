@@ -8,6 +8,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { LinearGradient } from "expo-linear-gradient";
@@ -170,7 +171,11 @@ export function DailyAuraScreen({ navigation }: Props) {
   }
 
   function handleViewReport(report: DailyAuraRecord) {
-    navigation.navigate("AuraReport", { report, mode: "saved" });
+    navigation.navigate("AuraReport", {
+      report,
+      mode: "saved",
+      photoPath: report.photo_path ?? undefined,
+    });
   }
 
   if (loading) {
@@ -199,8 +204,10 @@ export function DailyAuraScreen({ navigation }: Props) {
                 pressed && styles.backButtonPressed,
               ]}
               onPress={() => navigation.goBack()}
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
             >
-              <Text style={styles.backButtonText}>Back</Text>
+              <Ionicons name="chevron-back" size={22} color="#F8FAFC" />
             </Pressable>
             <View style={styles.headerTitleBlock}>
               <Text style={styles.kicker}>DAILY AURA</Text>
@@ -401,30 +408,25 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   backButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    width: 40,
+    height: 40,
     borderRadius: 999,
     backgroundColor: "rgba(255,255,255,0.06)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.10)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   backButtonPressed: {
     opacity: 0.7,
-  },
-  backButtonText: {
-    color: "#F8FAFC",
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 1.2,
   },
   headerTitleBlock: {
     flex: 1,
     alignItems: "center",
   },
   headerBalance: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    minWidth: 48,
+    width: 40,
+    height: 40,
   },
   kicker: {
     color: "#94A3B8",

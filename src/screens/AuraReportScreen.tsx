@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
+import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useAudioPlayer, setAudioModeAsync } from "expo-audio";
 import { LinearGradient } from "expo-linear-gradient";
-import { Alert, Pressable, StyleSheet, Text } from "react-native";
+import { Alert, Pressable, StyleSheet } from "react-native";
 // import ViewShot from "react-native-view-shot";
 import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -144,8 +145,10 @@ export function AuraReportScreen({ route, navigation }: Props) {
       <Pressable
         style={({ pressed }) => [styles.backButton, pressed && styles.backButtonPressed]}
         onPress={() => navigation.goBack()}
+        accessibilityRole="button"
+        accessibilityLabel="Go back"
       >
-        <Text style={styles.backButtonText}>Back</Text>
+        <Ionicons name="chevron-back" size={22} color={COLORS.text} />
       </Pressable>
 
       <AuraReportView report={report} mode={mode} photoUri={displayPhotoUri}>
@@ -179,20 +182,16 @@ const styles = StyleSheet.create({
     top: 52,
     left: 20,
     zIndex: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    width: 40,
+    height: 40,
     borderRadius: 999,
     backgroundColor: "rgba(255,255,255,0.06)",
     borderWidth: 1,
     borderColor: COLORS.border,
+    alignItems: "center",
+    justifyContent: "center",
   },
   backButtonPressed: {
     opacity: 0.7,
-  },
-  backButtonText: {
-    color: COLORS.text,
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 1.2,
   },
 });
